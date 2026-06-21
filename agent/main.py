@@ -252,8 +252,9 @@ def floor_agent(obs_dict):
 import time as _time  # noqa: E402
 
 _GAME_BUDGET_S = 540.0   # 9 min — margin under the 10-min hard cap
-_PER_MOVE_CAP_S = 3.0
+_PER_MOVE_CAP_S = 6.0
 _time_spent = 0.0
+_last_turn = 0
 
 try:
     from search.mcts import MctsAgent  # noqa: E402
@@ -264,10 +265,22 @@ except Exception:
 
 
 def agent(obs_dict):
-    global _time_spent
+    global _time_spent, _last_turn
     try:
         if isinstance(obs_dict, dict) and obs_dict.get("select") is None:
+            _time_spent = 0.0   # new game: reset the per-game clock budget
+            _last_turn = 0
             return my_deck
+    except Exception:
+        pass
+    # Reset the clock if a new game started without a fresh import (turn went backwards).
+    try:
+        cur = obs_dict.get("current") if isinstance(obs_dict, dict) else None
+        turn = cur.get("turn") if isinstance(cur, dict) else None
+        if turn is not None:
+            if turn < _last_turn:
+                _time_spent = 0.0
+            _last_turn = turn
     except Exception:
         pass
     if _mcts is None:

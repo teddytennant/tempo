@@ -56,8 +56,17 @@ rollouts, floor fallback for non-main decisions. Official sample deck both sides
 - MCTS vs floor: **9–3 (75%)**
 - (context: floor vs random = 34.5%, random vs random = 51%)
 
-MCTS dominates both baselines at trivial search depth, 0 errors. The keystone works. Next:
-stronger rollout/prior (BC net), more iterations under a time budget, then submit to the ladder.
+MCTS dominates both baselines at trivial search depth, 0 errors. The keystone works.
+
+**v1.1 — lethal-aware rollouts + time budget:** rollout policy now takes a KO attack when available
+(else random), and the deploy agent is time-budgeted (6 s/move, 9-min game-clock guard, per-game
+reset, floor fallback). Result: MCTS now **100% vs floor** (up from 75%) and 100% vs random, 0 errors,
+deploy agent ~30 s/game (well inside the clock). Floor scored **478.6** on the live ladder; this is
+the agent we put up against the ~1350 field.
+
+Next levers (don't need the ladder score): opponent-deck modeling in determinization (currently
+assumes opp plays our deck), more search/move, learned rollout+prior (Stage 3 BC from MCTS self-play),
+and deck selection (currently the official sample deck).
 
 ## Local run note (NixOS)
 

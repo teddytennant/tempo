@@ -84,25 +84,27 @@ def main():
     ap.add_argument("--deck", default=os.path.join(_ROOT, "agent", "deck.csv"))
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--iters", type=int, default=60)
+    ap.add_argument("--iters1", type=int, default=None)  # p1's iters (defaults to --iters)
     args = ap.parse_args()
 
     random.seed(args.seed)
     global _DECK
     _DECK = _read_deck(args.deck)
 
-    def _make(name, seed):
+    def _make(name, seed, iters):
         if name == "random":
             return random_agent
         if name == "floor":
             return _load_floor()
         if name == "mcts":
             from search.mcts import MctsAgent
-            return MctsAgent(_DECK, iters=args.iters, seed=seed, fallback=_load_floor())
+            return MctsAgent(_DECK, iters=iters, seed=seed, fallback=_load_floor())
         if name == "deploy":
             return _load_deploy()
         raise ValueError(name)
 
-    a0, a1 = _make(args.p0, 10), _make(args.p1, 20)
+    a0 = _make(args.p0, 10, args.iters)
+    a1 = _make(args.p1, 20, args.iters1 if args.iters1 is not None else args.iters)
 
     wins = [0, 0, 0]  # p0, p1, draw
     unfinished = total_steps = total_errors = 0

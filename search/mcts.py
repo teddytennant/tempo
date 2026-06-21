@@ -22,12 +22,14 @@ sys.path.insert(0, _ROOT)
 sys.path.insert(0, os.path.join(_ROOT, "agent"))
 
 from cg.api import (  # noqa: E402
-    all_card_data, to_observation_class,
+    all_attack, all_card_data, to_observation_class,
     search_begin, search_step, search_end,
 )
 
 _CARDS = {c.cardId: c for c in all_card_data()}
-MAIN_CTX = 0  # SelectContext.MAIN
+_ATK_DMG = {a.attackId: int(getattr(a, "damage", 0) or 0) for a in all_attack()}
+MAIN_CTX = 0   # SelectContext.MAIN
+ATTACK_OPT = 13  # OptionType.ATTACK
 
 
 def _canon(opt):
@@ -114,6 +116,25 @@ class MctsAgent:
             return []
         return self.rng.sample(range(n), min(k, n))
 
+    def _rollout_sel(self, o):
+        """Rollout policy: take a lethal KO attack if one is available, else random.
+        Stronger-than-random playouts give sharper value estimates without the floor
+        heuristic's pathologies (the floor itself loses to random)."""
+        sel = o.select
+        n = len(sel.option)
+        if n == 0 or sel.maxCount <= 0:
+            return []
+        st = o.current
+        if st is not None and sel.maxCount == 1:
+            opp = st.players[1 - st.yourIndex].active
+            opp_hp = opp[0].hp if (opp and opp[0] is not None) else 0
+            if opp_hp > 0:
+                for i, opt in enumerate(sel.option):
+                    if int(opt.type) == ATTACK_OPT and opt.attackId is not None:
+                        if _ATK_DMG.get(opt.attackId, 0) >= opp_hp:
+                            return [i]
+        return self.rng.sample(range(n), min(sel.maxCount, n))
+
     def _rollout(self, ss, our_index):
         cur = ss
         for _ in range(self.rollout_cap):
@@ -122,7 +143,7 @@ class MctsAgent:
                 return _value_for(o, our_index)
             if o.select is None:
                 return 0.5
-            cur = search_step(cur.searchId, self._default_sel(o))
+            cur = search_step(cur.searchId, self._rollout_sel(o))
         # undecided after cap: neutral
         return 0.5
 
