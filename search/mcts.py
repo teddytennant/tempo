@@ -109,6 +109,7 @@ class MctsAgent:
                  opp_model=None, rollout_policy=None, pv=None):
         self.deck = list(deck)
         self.pv = pv            # policy_value(obs)->(priors,value); enables AlphaZero-style PUCT
+        self.last_policy = None  # visit-count distribution over the last root's options (self-play target)
         # Opponent model for determinization: the deck we ASSUME the opponent plays. On the
         # ladder the field is dominated by one archetype, so modelling that (not a mirror of our
         # own deck) makes the search realistic. Defaults to our deck (mirror) if unspecified.
@@ -268,6 +269,7 @@ class MctsAgent:
 
     # ---- entry ----
     def __call__(self, obs_dict):
+        self.last_policy = None
         obs = to_observation_class(obs_dict)
         if obs.select is None:
             return self.deck
@@ -296,6 +298,9 @@ class MctsAgent:
         real_keys = [_canon(opt) for opt in obs.select.option]
         if not root.visits:
             return self.fallback(obs_dict) if self.fallback else self._default_sel(obs)
+        tot = sum(root.visits.get(k, 0) for k in real_keys)
+        if tot > 0:
+            self.last_policy = [root.visits.get(k, 0) / tot for k in real_keys]
         best_key = max(root.visits, key=lambda kk: root.visits[kk])
         if best_key in real_keys:
             return [real_keys.index(best_key)]

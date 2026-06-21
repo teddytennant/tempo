@@ -33,3 +33,5 @@ class NetPV:
         s, v = self.net(G, O, M)
         p = torch.softmax(s[0], 0).numpy()
         return p.tolist(), float(v.item())
+
+    __call__ = policy_value

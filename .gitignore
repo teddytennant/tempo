@@ -35,3 +35,5 @@ data/decks_top/
 data/decks/sample.csv
 net/bc_model.pt
 data/bc/
+net/model.pt
+data/selfplay/
