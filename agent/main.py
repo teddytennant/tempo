@@ -323,6 +323,15 @@ if _have_real_cg:
                 _er.init(os.path.abspath(_lp))
                 _RUST = _er
                 break
+        # Net-in-Rust: load the policy/value net so choose() uses PUCT (priors + value-at-leaf).
+        if _RUST is not None:
+            for _np in [os.path.join(_h, "model.npz"), "model.npz", "/kaggle_simulations/agent/model.npz"]:
+                if os.path.exists(_np):
+                    try:
+                        _RUST.init_net(os.path.abspath(_np))
+                    except Exception:
+                        pass
+                    break
     except Exception:
         _RUST = None
 
