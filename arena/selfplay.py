@@ -74,18 +74,28 @@ def play_game(agent0, agent1, deck0, deck1, max_steps=2000):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--games", type=int, default=10)
-    ap.add_argument("--p0", choices=["floor", "random"], default="floor")
-    ap.add_argument("--p1", choices=["floor", "random"], default="random")
+    ap.add_argument("--p0", choices=["floor", "random", "mcts"], default="floor")
+    ap.add_argument("--p1", choices=["floor", "random", "mcts"], default="random")
     ap.add_argument("--deck", default=os.path.join(_ROOT, "agent", "deck.csv"))
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--iters", type=int, default=60)
     args = ap.parse_args()
 
     random.seed(args.seed)
     global _DECK
     _DECK = _read_deck(args.deck)
 
-    picks = {"floor": _load_floor(), "random": random_agent}
-    a0, a1 = picks[args.p0], picks[args.p1]
+    def _make(name, seed):
+        if name == "random":
+            return random_agent
+        if name == "floor":
+            return _load_floor()
+        if name == "mcts":
+            from search.mcts import MctsAgent
+            return MctsAgent(_DECK, iters=args.iters, seed=seed, fallback=_load_floor())
+        raise ValueError(name)
+
+    a0, a1 = _make(args.p0, 10), _make(args.p1, 20)
 
     wins = [0, 0, 0]  # p0, p1, draw
     unfinished = total_steps = total_errors = 0

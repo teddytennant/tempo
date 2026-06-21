@@ -48,6 +48,17 @@ A rule-based agent piloting a real combo deck plays **worse than random** — th
 decks piloted clunkily" effect, first-hand. This is the gap the learned policy closes, and a clean
 data point for the Strategy Track report.
 
+## MCTS proof-of-signal (Stage 2) ✅
+
+Determinized UCT over the native search API (`search/mcts.py`), 40 iterations/move, random
+rollouts, floor fallback for non-main decisions. Official sample deck both sides, real engine:
+- MCTS vs random: **10–0 and 12–0 (100%)**, from either seat
+- MCTS vs floor: **9–3 (75%)**
+- (context: floor vs random = 34.5%, random vs random = 51%)
+
+MCTS dominates both baselines at trivial search depth, 0 errors. The keystone works. Next:
+stronger rollout/prior (BC net), more iterations under a time budget, then submit to the ladder.
+
 ## Local run note (NixOS)
 
 `libcg.so` needs `libstdc++.so.6`, absent from NixOS's default loader path. `scripts/run.sh` sets
