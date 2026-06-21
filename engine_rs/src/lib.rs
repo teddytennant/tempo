@@ -14,6 +14,8 @@ use std::os::raw::{c_char, c_int, c_void};
 use std::sync::Mutex;
 use std::time::Instant;
 
+mod net;
+
 type FnVoid = unsafe extern "C" fn();
 type FnAgentStart = unsafe extern "C" fn() -> *mut c_void;
 type FnCharP = unsafe extern "C" fn() -> *const c_char;
@@ -32,8 +34,11 @@ struct Engine {
     se: FnSearchEnd,
     atk_dmg: HashMap<i64, i64>,
     basics: std::collections::HashSet<i64>,
+    cards: net::Cards,
 }
 unsafe impl Send for Engine {}
+
+static NET: OnceCell<net::Net> = OnceCell::new();
 
 static ENGINE: OnceCell<Mutex<Engine>> = OnceCell::new();
 static LAST_SIMS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
@@ -115,6 +120,31 @@ fn parse_result(json: &str) -> Option<(i64, Obs)> {
     Some((s.search_id, s.observation))
 }
 
+// Full-observation variants (for net-guided PUCT: need the whole board to featurize).
+#[derive(Deserialize)]
+struct FApiResult { state: Option<FSW>, error: i64 }
+#[derive(Deserialize)]
+struct FSW { observation: net::FObs, #[serde(rename = "searchId")] search_id: i64 }
+fn parse_full(json: &str) -> Option<(i64, net::FObs)> {
+    let r: FApiResult = serde_json::from_str(json).ok()?;
+    if r.error != 0 { return None; }
+    let s = r.state?;
+    Some((s.search_id, s.observation))
+}
+fn do_begin_f(e: &Engine, sbi: &str, d: &Det) -> Option<(i64, net::FObs)> {
+    let cs = std::ffi::CString::new(sbi).ok()?;
+    let json = unsafe {
+        cstr((e.sb)(e.agent_ptr, cs.as_ptr(), sbi.len() as c_int,
+            d.your_deck.as_ptr(), d.your_prize.as_ptr(), d.opp_deck.as_ptr(),
+            d.opp_prize.as_ptr(), d.opp_hand.as_ptr(), d.opp_active.as_ptr(), 0))
+    };
+    parse_full(&json)
+}
+fn do_step_f(e: &Engine, sid: i64, sel: &[i32]) -> Option<(i64, net::FObs)> {
+    let json = unsafe { cstr((e.ss)(e.agent_ptr, sid, sel.as_ptr(), sel.len() as c_int)) };
+    parse_full(&json)
+}
+
 // ── determinization ──────────────────────────────────────────────────────────
 struct Det {
     your_deck: Vec<c_int>, your_prize: Vec<c_int>,
@@ -132,9 +162,34 @@ struct Node {
     children: HashMap<i32, usize>,
     visits: HashMap<i32, u32>,
     wins: HashMap<i32, f64>,
+    p: HashMap<i32, f32>,
+    expanded: bool,
 }
 impl Node {
-    fn new() -> Self { Node { n: 0, children: HashMap::new(), visits: HashMap::new(), wins: HashMap::new() } }
+    fn new() -> Self {
+        Node { n: 0, children: HashMap::new(), visits: HashMap::new(), wins: HashMap::new(),
+               p: HashMap::new(), expanded: false }
+    }
+    fn expand_net(&mut self, nopt: usize, priors: &[f32]) {
+        self.expanded = true;
+        for i in 0..nopt {
+            self.p.insert(i as i32, priors.get(i).copied().unwrap_or(0.0));
+            self.visits.entry(i as i32).or_insert(0);
+            self.wins.entry(i as i32).or_insert(0.0);
+        }
+    }
+    fn puct_pick(&self, nopt: usize, c: f64) -> i32 {
+        let total: u32 = (0..nopt as i32).map(|i| self.visits.get(&i).copied().unwrap_or(0)).sum();
+        let sq = ((total + 1) as f64).sqrt();
+        let mut best = 0i32; let mut bv = f64::MIN;
+        for i in 0..nopt as i32 {
+            let v = self.visits.get(&i).copied().unwrap_or(0);
+            let q = if v > 0 { self.wins[&i] / v as f64 } else { 0.0 };
+            let u = c * (*self.p.get(&i).unwrap_or(&1e-3) as f64) * sq / (1.0 + v as f64);
+            if q + u > bv { bv = q + u; best = i; }
+        }
+        best
+    }
 }
 
 const MAIN_CTX: i64 = 0;
@@ -246,6 +301,62 @@ fn iterate(e: &Engine, sbi: &str, det: &Det, our: i64, arena: &mut Vec<Node>, c:
     unsafe { (e.se)(e.agent_ptr); }
 }
 
+fn net_default_pick(e: &Engine, obs: &net::FObs, rng: &mut SmallRng) -> Vec<i32> {
+    let n = obs.n_opts();
+    let k = obs.max_count();
+    if n == 0 || k <= 0 { return vec![]; }
+    if k == 1 {
+        if let Some(i) = obs.lethal_pick(&e.atk_dmg) { return vec![i]; }
+    }
+    let kk = (k as usize).min(n);
+    let mut idx: Vec<i32> = (0..n as i32).collect();
+    for i in 0..kk { let j = rng.gen_range(i..n); idx.swap(i, j); }
+    idx[..kk].to_vec()
+}
+
+// AlphaZero-style: net priors + value-at-leaf (no rollout). Faster than UCB+rollout AND guided.
+fn iterate_net(e: &Engine, netw: &net::Net, sbi: &str, det: &Det, our: i64,
+               arena: &mut Vec<Node>, c: f64, rng: &mut SmallRng) {
+    let (mut sid, mut obs) = match do_begin_f(e, sbi, det) { Some(x) => x, None => return };
+    let mut node = 0usize;
+    let mut path: Vec<(usize, i32)> = Vec::new();
+    let value: f64;
+    loop {
+        if let Some(r) = obs.terminal() {
+            value = if r == our { 1.0 } else if r == 2 { 0.5 } else { 0.0 };
+            break;
+        }
+        if obs.select.is_none() { value = 0.5; break; }
+        if !obs.searchable() {
+            let pick = net_default_pick(e, &obs, rng);
+            match do_step_f(e, sid, &pick) { Some((s, o)) => { sid = s; obs = o; continue; } None => { value = 0.5; break; } }
+        }
+        let nopt = obs.n_opts();
+        if !arena[node].expanded {
+            let (g, opts) = net::featurize(&obs, &e.cards);
+            let (priors, v) = netw.forward(&g, &opts);
+            arena[node].expand_net(nopt, &priors);
+            value = if obs.yi() == our { ((v + 1.0) / 2.0) as f64 } else { ((1.0 - v) / 2.0) as f64 };
+            break;
+        }
+        let chosen = arena[node].puct_pick(nopt, c);
+        path.push((node, chosen));
+        let child = match arena[node].children.get(&chosen) {
+            Some(&ci) => ci,
+            None => { let ci = arena.len(); arena.push(Node::new()); arena[node].children.insert(chosen, ci); ci }
+        };
+        node = child;
+        match do_step_f(e, sid, &[chosen]) { Some((s, o)) => { sid = s; obs = o; } None => { value = 0.5; break; } }
+    }
+    for (ni, oi) in path {
+        let nd = &mut arena[ni];
+        nd.n += 1;
+        *nd.visits.entry(oi).or_insert(0) += 1;
+        *nd.wins.entry(oi).or_insert(0.0) += value;
+    }
+    unsafe { (e.se)(e.agent_ptr); }
+}
+
 // ── PyO3 ─────────────────────────────────────────────────────────────────────
 #[pyfunction]
 fn init(lib_path: &str) -> PyResult<bool> {
@@ -257,13 +368,16 @@ fn init(lib_path: &str) -> PyResult<bool> {
         let astart: Symbol<FnAgentStart> = lib.get(b"AgentStart\0").map_err(|e| pyerr(&e.to_string()))?;
         let agent_ptr = astart();
         let allatk: Symbol<FnCharP> = lib.get(b"AllAttack\0").map_err(|e| pyerr(&e.to_string()))?;
-        let atk_dmg = parse_atk(&cstr(allatk()));
+        let atk_json = cstr(allatk());
         let allcard: Symbol<FnCharP> = lib.get(b"AllCard\0").map_err(|e| pyerr(&e.to_string()))?;
-        let basics = parse_basics(&cstr(allcard()));
+        let card_json = cstr(allcard());
+        let atk_dmg = parse_atk(&atk_json);
+        let basics = parse_basics(&card_json);
+        let cards = net::Cards::build(&card_json, &atk_json);
         let sb: FnSearchBegin = *lib.get(b"SearchBegin\0").map_err(|e| pyerr(&e.to_string()))?;
         let ss: FnSearchStep = *lib.get(b"SearchStep\0").map_err(|e| pyerr(&e.to_string()))?;
         let se: FnSearchEnd = *lib.get(b"SearchEnd\0").map_err(|e| pyerr(&e.to_string()))?;
-        Engine { _lib: lib, agent_ptr, sb, ss, se, atk_dmg, basics }
+        Engine { _lib: lib, agent_ptr, sb, ss, se, atk_dmg, basics, cards }
     };
     let _ = ENGINE.set(Mutex::new(eng));
     Ok(true)
@@ -280,8 +394,8 @@ fn parse_basics(json: &str) -> std::collections::HashSet<i64> {
 fn pyerr(m: &str) -> PyErr { pyo3::exceptions::PyRuntimeError::new_err(m.to_string()) }
 
 #[pyfunction]
-#[pyo3(signature = (obs_json, deck, opp_model, budget_s=8.0, max_iters=100000, c=1.4, seed=0))]
-fn choose(obs_json: &str, deck: Vec<i32>, opp_model: Vec<i32>, budget_s: f64, max_iters: u32, c: f64, seed: u64) -> PyResult<Vec<i32>> {
+#[pyo3(signature = (obs_json, deck, opp_model, budget_s=8.0, max_iters=100000, c=1.4, seed=0, use_net=true))]
+fn choose(obs_json: &str, deck: Vec<i32>, opp_model: Vec<i32>, budget_s: f64, max_iters: u32, c: f64, seed: u64, use_net: bool) -> PyResult<Vec<i32>> {
     let m = ENGINE.get().ok_or_else(|| pyerr("engine not init"))?;
     let e = m.lock().map_err(|_| pyerr("lock"))?;
     let obs: Obs = serde_json::from_str(obs_json).map_err(|e| pyerr(&e.to_string()))?;
@@ -305,10 +419,14 @@ fn choose(obs_json: &str, deck: Vec<i32>, opp_model: Vec<i32>, budget_s: f64, ma
     let nopt = sel.option.len();
     let mut arena = vec![Node::new()];
     let mut rng = SmallRng::seed_from_u64(seed ^ (cur.yi as u64).wrapping_mul(0x9E3779B97F4A7C15));
+    let netw = if use_net { NET.get() } else { None };
     let deadline = Instant::now();
     let mut done = 0u32;
     while done < max_iters && deadline.elapsed().as_secs_f64() < budget_s {
-        iterate(&e, &sbi, &det, our, &mut arena, c, &mut rng, 200);
+        match netw {
+            Some(nw) => iterate_net(&e, nw, &sbi, &det, our, &mut arena, c, &mut rng),
+            None => iterate(&e, &sbi, &det, our, &mut arena, c, &mut rng, 200),
+        }
         done += 1;
     }
     unsafe { (e.se)(e.agent_ptr); }
@@ -326,10 +444,41 @@ fn choose(obs_json: &str, deck: Vec<i32>, opp_model: Vec<i32>, budget_s: f64, ma
 #[pyfunction]
 fn last_sims() -> u32 { LAST_SIMS.load(std::sync::atomic::Ordering::Relaxed) }
 
+#[pyfunction]
+fn init_net(npz_path: &str) -> PyResult<bool> {
+    match net::Net::load(npz_path) {
+        Some(n) => { let _ = NET.set(n); Ok(true) }
+        None => Ok(false),
+    }
+}
+
+#[pyfunction]
+fn featurize_debug(obs_json: &str) -> PyResult<(Vec<f32>, Vec<Vec<f32>>)> {
+    let m = ENGINE.get().ok_or_else(|| pyerr("engine not init"))?;
+    let e = m.lock().map_err(|_| pyerr("lock"))?;
+    let obs: net::FObs = serde_json::from_str(obs_json).map_err(|e| pyerr(&e.to_string()))?;
+    if obs.current.is_none() || obs.select.is_none() { return Err(pyerr("no current/select")); }
+    Ok(net::featurize(&obs, &e.cards))
+}
+
+#[pyfunction]
+fn policy_value_debug(obs_json: &str) -> PyResult<(Vec<f32>, f32)> {
+    let m = ENGINE.get().ok_or_else(|| pyerr("engine not init"))?;
+    let e = m.lock().map_err(|_| pyerr("lock"))?;
+    let netw = NET.get().ok_or_else(|| pyerr("net not init"))?;
+    let obs: net::FObs = serde_json::from_str(obs_json).map_err(|e| pyerr(&e.to_string()))?;
+    if obs.current.is_none() || obs.select.is_none() { return Err(pyerr("no")); }
+    let (g, opts) = net::featurize(&obs, &e.cards);
+    Ok(netw.forward(&g, &opts))
+}
+
 #[pymodule]
 fn engine_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(init, m)?)?;
     m.add_function(wrap_pyfunction!(choose, m)?)?;
     m.add_function(wrap_pyfunction!(last_sims, m)?)?;
+    m.add_function(wrap_pyfunction!(init_net, m)?)?;
+    m.add_function(wrap_pyfunction!(featurize_debug, m)?)?;
+    m.add_function(wrap_pyfunction!(policy_value_debug, m)?)?;
     Ok(())
 }
