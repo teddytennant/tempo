@@ -95,9 +95,28 @@ from cg.api import (
   (attack IDs), `.weakness`, `.resistance`, `.ex`, `.megaEx`, `.stage1`, `.stage2`, `.energyType`
 - `all_attack() -> list`: `.attackId`, `.energies: list[EnergyType]` (cost), `.text`
 
-## Engine note (the key uncertainty)
+## Corrections vs first draft (verified against the real `cg/api.py`)
 
-`to_observation_class` and `all_card_data` are read-only views. There is **no public
-clone/step on a mid-game state** — this is why the field's MCTS failed. Whether the engine
-can be forked for search is de-risk fact #2 (see `02-forward-model.md`). The agent itself
-never constructs moves: **the engine only ever offers legal options; we rank and pick.**
+- `Observation` has **four** fields: `select: SelectData|None`, `logs: list[Log]` (events since the
+  last selection), `current: State|None`, `search_begin_input: str|None`.
+- `select` is a **`SelectData`**: `type` (SelectType), `context` (SelectContext), `minCount`,
+  `maxCount`, `remainDamageCounter`, `remainEnergyCost`, `option`, `deck`, `contextCard`, `effect`.
+- Enums are `IntEnum` with fixed values, and richer than the first draft: `OptionType` includes
+  `TOOL_CARD, ENERGY_CARD, SKILL, SPECIAL_CONDITION`; `SelectContext` has ~48 members (e.g.
+  `IS_FIRST=41`, `MAIN=0`, `MULLIGAN=42`). `AreaType` adds `ENERGY, TOOL, PRE_EVOLUTION, PLAYER`.
+- `CardData` carries `damage` on **`Attack`** (not the card); plus `basic/stage1/stage2/ex/megaEx/
+  tera/aceSpec/evolvesFrom/retreatCost`. `Pokemon` adds `serial/maxHp/appearThisTurn/preEvolution`.
+- Player state class is `PlayerState`; opponent `hand` is `None` (hidden), use `handCount`.
+- **`Log`** entries (LogType) are the move history for card-counting / belief inference.
+
+## Engine = its own forward model
+
+`cg/api.py` exposes `search_begin / search_step / search_release / search_end` (native, backed by
+`libcg.so`) — a determinized search API. There IS a clone/step for hypothetical lines; the field
+just never used it. See `02-forward-model.md`. The agent never constructs moves: **the engine only
+offers legal options; we rank and pick.**
+
+## Running locally (NixOS)
+
+Importing `cg.api` loads `libcg.so`, which needs `libstdc++.so.6` (absent from NixOS's default
+loader path). Use `scripts/run.sh` (sets `LD_LIBRARY_PATH` from gcc). Kaggle's sandbox has it.

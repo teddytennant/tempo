@@ -1,5 +1,11 @@
 # Winning Plan — Pokémon TCG AI Battle Challenge
 
+> **UPDATE (post-engine-download):** the "forward model is the unsolved wall / reimplement in Rust"
+> framing below is **superseded** — the engine ships a native determinized search API
+> (`search_begin`/`search_step`). We use it instead of reimplementing rules. See
+> `07-derisk-findings.md` and `02-forward-model.md`. The thesis (learned policy pilots a strong deck
+> cleanly) is unchanged and now first-hand evidenced: the rule-based floor agent loses to random.
+
 ## Context
 
 Kaggle × The Pokémon Company. Two linked tracks: a **Simulation** ladder

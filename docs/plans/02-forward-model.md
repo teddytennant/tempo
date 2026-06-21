@@ -1,49 +1,48 @@
-# Forward Model (Rust) — Spec
+# Forward Model — Spec (revised: use the engine's native search API)
 
-The forward model is what the public field failed to build (their MCTS `GameSimulator` is a stub),
-and it gates all search + self-play. It is the report's headline.
+**Resolved (see 07-derisk-findings.md): the engine ships its own forward model.** We do NOT
+reimplement the rules. The public field's MCTS failed because they stubbed a simulator; the official
+`cg/api.py` already exposes a native, determinized search interface backed by `libcg.so`.
 
-## De-risk first (fact #2)
+## The native search API
 
-Before building, determine how `cg` can be used as a forward model:
-- **(a) Forkable:** can a mid-game engine state be deep-copied/serialized and advanced by applying a
-  chosen option? → cheap search directly on `cg`; Rust optional for speed.
-- **(b) Re-simulatable:** can a game be replayed from seed + action history to reproduce "now" and
-  branch hypotheticals? → works but slow → Rust reimplementation pays for itself.
-- **(c) Neither:** no node-level search → rely on policy + outcome-level self-play (full games only).
-
-Record the answer here once known; it selects the path below.
-
-## Scope
-
-Do **not** model all ~1267 cards. Model only the cards in **our deck + the live meta decks**
-(a few dozen distinct effects). Grow coverage as the meta shifts. Card schema and effect text come
-from the engine's `all_card_data()` / `all_attack()`.
-
-## Interface (Rust crate `engine_rs`, PyO3 → abi3 wheel)
-
-```
-State::clone()            # cheap copy for rollouts
-State::legal_options()    # mirror the engine's option enumeration
-State::apply(option)      # advance state (handles chance via injected RNG seed)
-State::is_terminal() -> winner
-State::encode() -> features  # same encoding the net consumes
+```python
+root = search_begin(obs, your_deck, your_prize,
+                    opponent_deck, opponent_prize, opponent_hand, opponent_active,
+                    manual_coin=False)         # -> SearchState{observation, searchId}
+nxt  = search_step(search_id, select)          # advance a hypothetical line
+search_release(search_id);  search_end()       # memory reuse
 ```
 
-## Parity (non-negotiable)
+- **Determinization is first-class:** you supply *predicted* opponent hidden cards (deck/prize/
+  hand/active). Sample a world → `search_begin` → branch with `search_step` from `searchId`s.
+- **Chance is controllable** via `manual_coin`.
+- `obs.search_begin_input` (carried on every agent observation) is the required handle into
+  `search_begin`.
+- Engine error codes are explicit (invalid id, released, battle ended, count/range/dup violations).
 
-A `tools/parity.py` harness drives the Rust engine and `cg` on identical action streams and asserts
-identical observable state transitions, per card and per interaction. **Never ship a card whose
-effect hasn't passed parity** — a divergence is a silently lost ladder game. Determinism via an
-explicit injected seed so both engines branch chance identically.
+## MCTS design (on top of the native API)
 
-## Throughput probe
+Determinized PUCT-MCTS:
+1. Sample N determinizations of opponent hidden info (belief from logs + card-counting).
+2. For each, `search_begin`, then expand/select with `search_step`, net priors+value at leaves.
+3. Aggregate option values across determinizations; pick the best legal selection.
+Time-budget the whole thing against the 10-min clock with a heuristic fallback.
 
-Measure games/sec/core for determinized ISMCTS (sims × determinizations × ~60 moves). This number
-sets the self-play compute estimate and whether the micro-experiment (03) is affordable.
+## Rust role (optional, profile-gated)
 
-## Deployment
+`search_step` returns JSON decoded via `json.loads` + reflective `to_dataclass` — heavy per node.
+Build MCTS in Python first (correct), profile sims/move, then move the hot loop to a Rust driver
+calling the C ABI directly (extracting only needed fields) if per-node overhead caps strength.
+Compiled `.so` in the submission is confirmed allowed (the engine itself is one).
 
-If de-risk fact #3 (compiled `.so` loads in the agent sandbox) passes, bundle the wheel in
-`submission.tar.gz` for in-agent search. If not, the Rust engine stays a **training-time** asset and
-the deployed agent ships the policy net only (search done offline to train it).
+## Belief / determinization quality
+
+The weak link is *which* hidden worlds we sample. Start uniform over unseen legal cards consistent
+with the opponent's deck-count and observed plays; improve with card-counting from `logs`
+(MOVE_CARD/DRAW/PLAY/ATTACH) and meta priors over likely decklists. Better beliefs > more sims.
+
+## Self-play
+
+Full games already run via `battle_start`/`battle_select` (see `arena/selfplay.py`). Self-play RL
+uses the same loop; the search API provides the per-move lookahead for AlphaZero-style targets.
