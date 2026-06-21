@@ -15,6 +15,7 @@ import math
 import os
 import random
 import sys
+import time
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _ROOT)
@@ -78,7 +79,7 @@ class _Node:
 
 class MctsAgent:
     def __init__(self, deck, iters=60, rollout_cap=200, c=1.4, seed=0,
-                 fallback=None, search_contexts=(MAIN_CTX,)):
+                 fallback=None, search_contexts=(MAIN_CTX,), time_budget_s=None):
         self.deck = list(deck)
         self.iters = iters
         self.rollout_cap = rollout_cap
@@ -86,6 +87,7 @@ class MctsAgent:
         self.rng = random.Random(seed)
         self.fallback = fallback        # callable(obs_dict)->selection for non-searched decisions
         self.search_contexts = set(search_contexts)
+        self.time_budget_s = time_budget_s  # wall-clock cap per move; None = use fixed iters
 
     # ---- determinization ----
     def _determinize(self, obs):
@@ -180,8 +182,15 @@ class MctsAgent:
         our_index = obs.current.yourIndex
         root = _Node()
         try:
-            for _ in range(self.iters):
-                self._iterate(obs, our_index, root)
+            if self.time_budget_s is not None:
+                deadline = time.monotonic() + self.time_budget_s
+                done = 0
+                while done < self.iters and time.monotonic() < deadline:
+                    self._iterate(obs, our_index, root)
+                    done += 1
+            else:
+                for _ in range(self.iters):
+                    self._iterate(obs, our_index, root)
             search_end()
         except Exception:
             search_end()

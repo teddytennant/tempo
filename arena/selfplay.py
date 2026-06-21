@@ -36,7 +36,12 @@ def random_agent(obs_dict):
 
 def _load_floor():
     import main as floor  # agent/main.py
-    return floor.agent
+    return floor.floor_agent
+
+
+def _load_deploy():
+    import main as m  # the real submission entry (MCTS + clock + fallback)
+    return m.agent
 
 
 def _read_deck(path):
@@ -74,8 +79,8 @@ def play_game(agent0, agent1, deck0, deck1, max_steps=2000):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--games", type=int, default=10)
-    ap.add_argument("--p0", choices=["floor", "random", "mcts"], default="floor")
-    ap.add_argument("--p1", choices=["floor", "random", "mcts"], default="random")
+    ap.add_argument("--p0", choices=["floor", "random", "mcts", "deploy"], default="floor")
+    ap.add_argument("--p1", choices=["floor", "random", "mcts", "deploy"], default="random")
     ap.add_argument("--deck", default=os.path.join(_ROOT, "agent", "deck.csv"))
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--iters", type=int, default=60)
@@ -93,6 +98,8 @@ def main():
         if name == "mcts":
             from search.mcts import MctsAgent
             return MctsAgent(_DECK, iters=args.iters, seed=seed, fallback=_load_floor())
+        if name == "deploy":
+            return _load_deploy()
         raise ValueError(name)
 
     a0, a1 = _make(args.p0, 10), _make(args.p1, 20)

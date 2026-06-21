@@ -226,8 +226,8 @@ class Policy:
         return 100
 
 
-# ── entry point ──────────────────────────────────────────────────────────────
-def agent(obs_dict):
+# ── floor heuristic entry (fallback / mock-test path) ────────────────────────
+def floor_agent(obs_dict):
     try:
         if isinstance(obs_dict, dict) and obs_dict.get("select") is None:
             return my_deck
@@ -243,3 +243,44 @@ def agent(obs_dict):
             return _legal_fallback(obs.select)
     except Exception:
         return _legal_fallback_from_dict(obs_dict if isinstance(obs_dict, dict) else {})
+
+
+# ── MCTS-backed entry (deploy) ───────────────────────────────────────────────
+# Determinized search over the engine's native API, time-budgeted under the 10-min game clock,
+# with the floor heuristic as a hard fallback. Import is defensive: under the mock engine (tests)
+# the native search symbols are absent, so we degrade to the floor agent and stay contract-legal.
+import time as _time  # noqa: E402
+
+_GAME_BUDGET_S = 540.0   # 9 min — margin under the 10-min hard cap
+_PER_MOVE_CAP_S = 3.0
+_time_spent = 0.0
+
+try:
+    from search.mcts import MctsAgent  # noqa: E402
+    _mcts = MctsAgent(my_deck, iters=100000, rollout_cap=200,
+                      fallback=floor_agent, time_budget_s=_PER_MOVE_CAP_S)
+except Exception:
+    _mcts = None
+
+
+def agent(obs_dict):
+    global _time_spent
+    try:
+        if isinstance(obs_dict, dict) and obs_dict.get("select") is None:
+            return my_deck
+    except Exception:
+        pass
+    if _mcts is None:
+        return floor_agent(obs_dict)
+    t0 = _time.monotonic()
+    remaining = _GAME_BUDGET_S - _time_spent
+    try:
+        if remaining <= 2.0:
+            sel = floor_agent(obs_dict)            # out of clock — cheap heuristic
+        else:
+            _mcts.time_budget_s = min(_PER_MOVE_CAP_S, max(0.1, remaining * 0.05))
+            sel = _mcts(obs_dict)
+    except Exception:
+        sel = floor_agent(obs_dict)
+    _time_spent += _time.monotonic() - t0
+    return sel
