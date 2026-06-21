@@ -13,4 +13,6 @@ fi
 
 export LD_LIBRARY_PATH="$(dirname "$LIBSTDCXX"):${LD_LIBRARY_PATH:-}"
 cd "$ROOT"
-exec python3 "$@"
+PY="python3"
+[ -x "$ROOT/.venv/bin/python" ] && PY="$ROOT/.venv/bin/python"
+exec "$PY" "$@"

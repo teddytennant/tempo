@@ -33,3 +33,5 @@ reference/
 .DS_Store
 data/decks_top/
 data/decks/sample.csv
+net/bc_model.pt
+data/bc/
