@@ -14,6 +14,13 @@ cp "$SRC/deck.csv" "$TMP/deck.csv"
 mkdir -p "$TMP/search"
 cp "$REPO/search/__init__.py" "$REPO/search/mcts.py" "$TMP/search/"
 
+# Rust search core (manylinux2014 / glibc-2.17 .so) — main.py does `import engine_rs`.
+ML_WHL=$(ls "$REPO"/engine_rs/target/wheels/*manylinux2014*.whl 2>/dev/null | head -1)
+if [ -n "$ML_WHL" ]; then
+  ( cd "$TMP" && unzip -oq "$ML_WHL" 'engine_rs/*' )
+  echo "  (bundled Rust engine_rs from $(basename "$ML_WHL"))"
+fi
+
 # Optional learned net (numpy deploy). BUNDLE_NET=1 to include a proven model.
 if [ "${BUNDLE_NET:-0}" = "1" ] && [ -f "$REPO/net/model.npz" ]; then
   mkdir -p "$TMP/net"
