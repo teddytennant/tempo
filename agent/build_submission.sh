@@ -14,6 +14,14 @@ cp "$SRC/deck.csv" "$TMP/deck.csv"
 mkdir -p "$TMP/search"
 cp "$REPO/search/__init__.py" "$REPO/search/mcts.py" "$TMP/search/"
 
+# Optional learned net (numpy deploy). BUNDLE_NET=1 to include a proven model.
+if [ "${BUNDLE_NET:-0}" = "1" ] && [ -f "$REPO/net/model.npz" ]; then
+  mkdir -p "$TMP/net"
+  cp "$REPO/net/__init__.py" "$REPO/net/features.py" "$REPO/net/infer_np.py" "$TMP/net/"
+  cp "$REPO/net/model.npz" "$TMP/model.npz"
+  echo "  (bundled learned net: net/ + model.npz)"
+fi
+
 if [ -n "${CG_LIB_PATH:-}" ]; then
   cp -r "$CG_LIB_PATH" "$TMP/cg"
 else

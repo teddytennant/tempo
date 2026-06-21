@@ -285,10 +285,23 @@ try:
 except Exception:
     _opp_model = None
 
+# Optional learned policy prior (numpy-only). Used iff a model.npz is bundled — so the safe
+# vanilla-MCTS floor ships without it, and a proven net ships by bundling the file.
+_pv = None
+try:
+    _here = os.path.dirname(os.path.abspath(__file__))
+    for _p in [os.path.join(_here, "model.npz"), "model.npz", "/kaggle_simulations/agent/model.npz"]:
+        if os.path.exists(_p):
+            from net.infer_np import NetPVNumpy
+            _pv = NetPVNumpy(_p)
+            break
+except Exception:
+    _pv = None
+
 try:
     from search.mcts import MctsAgent  # noqa: E402
     _mcts = MctsAgent(my_deck, iters=100000, rollout_cap=200, fallback=floor_agent,
-                      time_budget_s=_PER_MOVE_CAP_S, opp_model=_opp_model)
+                      time_budget_s=_PER_MOVE_CAP_S, opp_model=_opp_model, pv=_pv)
 except Exception:
     _mcts = None
 
