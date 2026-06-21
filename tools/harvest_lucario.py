@@ -28,23 +28,32 @@ def list_raw(sub):
 def crawl_episodes(start_sub, max_eps, min_elo):
     """Best-first crawl up the Elo ladder; collect episode IDs where an agent has Elo >= min_elo."""
     import heapq
-    visited = set(); frontier = [(-1300.0, start_sub)]; eps = {}
+    visited = set(); frontier = [(-445.0, start_sub)]; eps = {}
     calls = 0
-    while frontier and calls < 120 and len(eps) < max_eps:
+    while frontier and calls < 140 and len(eps) < max_eps:
         _, sub = heapq.heappop(frontier)
         if sub in visited:
             continue
         visited.add(sub); calls += 1
         r = list_raw(sub)
+        tps = {t["id"]: t.get("publicLeaderboardSubmissionId") for t in r.get("teams", [])}
+        telo = {}
         for ep in r.get("episodes", []):
             agents = ep.get("agents", [])
             hi = max((a.get("updatedScore") or 0) for a in agents) if agents else 0
             if hi >= min_elo:
                 eps[ep["id"]] = hi
             for a in agents:
-                s = a.get("submissionId"); el = a.get("updatedScore") or 0
-                if s and s not in visited and el > 1000:
+                s = a.get("submissionId"); el = a.get("updatedScore") or 0; tid = a.get("teamId")
+                if tid:
+                    telo[tid] = max(telo.get(tid, 0), el)
+                if s and s not in visited and el > 500:
                     heapq.heappush(frontier, (-el, s))
+        for tid, ps in tps.items():
+            if ps and ps not in visited:
+                heapq.heappush(frontier, (-(telo.get(tid, 0)), ps))
+        if calls % 20 == 0:
+            print(f"  ...crawl {calls} calls, {len(eps)} hi-elo eps, frontier top={-frontier[0][0] if frontier else 0:.0f}")
     return sorted(eps, key=lambda e: -eps[e])[:max_eps]
 
 
