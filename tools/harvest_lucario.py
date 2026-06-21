@@ -14,32 +14,45 @@ EPDIR = os.path.join(_ROOT, "data", "lucario_episodes")
 OUT = os.path.join(_ROOT, "data", "bc_lucario", "records.jsonl")
 
 
-def list_eps(sub):
+def list_raw(sub):
     req = urllib.request.Request(
         "https://www.kaggle.com/api/i/competitions.EpisodeService/ListEpisodes",
         data=json.dumps({"submissionId": sub}).encode(),
         headers={"Content-Type": "application/json", "Authorization": "Bearer " + TOK})
     try:
-        r = json.load(urllib.request.urlopen(req, timeout=30))
-        return [e["id"] for e in r.get("episodes", [])]
+        return json.load(urllib.request.urlopen(req, timeout=30))
     except Exception:
-        return []
+        return {"episodes": []}
+
+
+def crawl_episodes(start_sub, max_eps, min_elo):
+    """Best-first crawl up the Elo ladder; collect episode IDs where an agent has Elo >= min_elo."""
+    import heapq
+    visited = set(); frontier = [(-1300.0, start_sub)]; eps = {}
+    calls = 0
+    while frontier and calls < 120 and len(eps) < max_eps:
+        _, sub = heapq.heappop(frontier)
+        if sub in visited:
+            continue
+        visited.add(sub); calls += 1
+        r = list_raw(sub)
+        for ep in r.get("episodes", []):
+            agents = ep.get("agents", [])
+            hi = max((a.get("updatedScore") or 0) for a in agents) if agents else 0
+            if hi >= min_elo:
+                eps[ep["id"]] = hi
+            for a in agents:
+                s = a.get("submissionId"); el = a.get("updatedScore") or 0
+                if s and s not in visited and el > 1000:
+                    heapq.heappush(frontier, (-el, s))
+    return sorted(eps, key=lambda e: -eps[e])[:max_eps]
 
 
 def main():
     ap = argparse.ArgumentParser(); ap.add_argument("--per-team", type=int, default=30); a = ap.parse_args()
     os.makedirs(EPDIR, exist_ok=True); os.makedirs(os.path.dirname(OUT), exist_ok=True)
-    import pickle
-    d = pickle.load(open("/tmp/topteams.pkl", "rb"))
-    # teams whose extracted deck was Mega Lucario (by name, from the deck-attribution step)
-    lucario_names = {"Praxel", "MEP", "LORD DREGS", "Pik-AI-chu", "tototo", "patamaru", "Aki Ogawa", "Kengo Yoko"}
-    subs = [d["sub"][t] for t in d["elo"] if d["name"][t] in lucario_names and d["sub"].get(t)]
-    print(f"lucario team submissions: {subs}")
-    eps = []
-    for s in subs:
-        eps += list_eps(s)[:a.per_team]
-    eps = sorted(set(eps))
-    print(f"downloading {len(eps)} candidate replays...")
+    eps = crawl_episodes(53915585, max_eps=a.per_team * 6, min_elo=1050)
+    print(f"crawl found {len(eps)} high-Elo episodes; downloading...")
     kag = os.path.expanduser("~/.local/bin/kaggle")
     for ep in eps:
         f = os.path.join(EPDIR, f"episode-{ep}-replay.json")
