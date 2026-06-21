@@ -24,6 +24,8 @@ sys.path.insert(0, os.path.join(_ROOT, "agent"))
 from arena.selfplay import play_game  # noqa: E402
 from cg.api import to_observation_class  # noqa: E402
 
+_RUST_SLOT = [0]  # per-process net-slot assignment for net-vs-net comparisons
+
 
 def _read(path):
     if not path:
@@ -50,18 +52,20 @@ def _mk(spec, seed):
     if pilot == "rust":
         import engine_rs, os as _os, json as _j
         engine_rs.init(_os.path.abspath(_os.path.join(_ROOT, "cg", "libcg.so")))
-        un = False
-        if pvpath:  # pv = an .npz -> net-in-Rust (PUCT); absent -> vanilla Rust MCTS
-            engine_rs.init_net(_os.path.abspath(pvpath)); un = True
+        un = False; slot = 0
+        if pvpath:  # pv = an .npz -> net-in-Rust (PUCT). Two distinct nets share a process via slots.
+            slot = _RUST_SLOT[0]
+            (engine_rs.init_net if slot == 0 else engine_rs.init_net2)(_os.path.abspath(pvpath))
+            _RUST_SLOT[0] += 1; un = True
         budget = max(0.2, iters / 100.0)  # reuse --iters as centiseconds of budget
         dd, oo = deck, (opp if opp else deck)
 
-        def rp(obs_dict, _dd=dd, _oo=oo, _b=budget, _s=seed, _un=un):
+        def rp(obs_dict, _dd=dd, _oo=oo, _b=budget, _s=seed, _un=un, _slot=slot):
             try:
                 s = obs_dict.get("select"); c = obs_dict.get("current")
                 if (s and c and s.get("context") == 0 and s.get("maxCount") == 1
                         and (s.get("minCount") or 0) <= 1 and len(s.get("option") or []) > 1):
-                    r = engine_rs.choose(_j.dumps(obs_dict), _dd, _oo, _b, 10**9, 1.4, _s, _un)
+                    r = engine_rs.choose(_j.dumps(obs_dict), _dd, _oo, _b, 10**9, 1.4, _s, _un, _slot)
                     if isinstance(r, list) and r:
                         return r
             except Exception:

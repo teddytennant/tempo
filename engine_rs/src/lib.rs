@@ -39,6 +39,7 @@ struct Engine {
 unsafe impl Send for Engine {}
 
 static NET: OnceCell<net::Net> = OnceCell::new();
+static NET2: OnceCell<net::Net> = OnceCell::new();
 
 static ENGINE: OnceCell<Mutex<Engine>> = OnceCell::new();
 static LAST_SIMS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
@@ -393,7 +394,7 @@ fn parse_basics(json: &str) -> std::collections::HashSet<i64> {
 }
 fn pyerr(m: &str) -> PyErr { pyo3::exceptions::PyRuntimeError::new_err(m.to_string()) }
 
-fn do_root(obs_json: &str, deck: Vec<i32>, opp_model: Vec<i32>, budget_s: f64, max_iters: u32, c: f64, seed: u64, use_net: bool) -> PyResult<(Vec<i32>, Vec<f32>)> {
+fn do_root(obs_json: &str, deck: Vec<i32>, opp_model: Vec<i32>, budget_s: f64, max_iters: u32, c: f64, seed: u64, use_net: bool, slot: u32) -> PyResult<(Vec<i32>, Vec<f32>)> {
     let m = ENGINE.get().ok_or_else(|| pyerr("engine not init"))?;
     let e = m.lock().map_err(|_| pyerr("lock"))?;
     let obs: Obs = serde_json::from_str(obs_json).map_err(|e| pyerr(&e.to_string()))?;
@@ -417,7 +418,7 @@ fn do_root(obs_json: &str, deck: Vec<i32>, opp_model: Vec<i32>, budget_s: f64, m
     let nopt = sel.option.len();
     let mut arena = vec![Node::new()];
     let mut rng = SmallRng::seed_from_u64(seed ^ (cur.yi as u64).wrapping_mul(0x9E3779B97F4A7C15));
-    let netw = if use_net { NET.get() } else { None };
+    let netw = if use_net { if slot == 1 { NET2.get() } else { NET.get() } } else { None };
     let deadline = Instant::now();
     let mut done = 0u32;
     while done < max_iters && deadline.elapsed().as_secs_f64() < budget_s {
@@ -444,15 +445,20 @@ fn do_root(obs_json: &str, deck: Vec<i32>, opp_model: Vec<i32>, budget_s: f64, m
 }
 
 #[pyfunction]
-#[pyo3(signature = (obs_json, deck, opp_model, budget_s=8.0, max_iters=100000, c=1.4, seed=0, use_net=true))]
-fn choose(obs_json: &str, deck: Vec<i32>, opp_model: Vec<i32>, budget_s: f64, max_iters: u32, c: f64, seed: u64, use_net: bool) -> PyResult<Vec<i32>> {
-    do_root(obs_json, deck, opp_model, budget_s, max_iters, c, seed, use_net).map(|(s, _)| s)
+#[pyo3(signature = (obs_json, deck, opp_model, budget_s=8.0, max_iters=100000, c=1.4, seed=0, use_net=true, slot=0))]
+fn choose(obs_json: &str, deck: Vec<i32>, opp_model: Vec<i32>, budget_s: f64, max_iters: u32, c: f64, seed: u64, use_net: bool, slot: u32) -> PyResult<Vec<i32>> {
+    do_root(obs_json, deck, opp_model, budget_s, max_iters, c, seed, use_net, slot).map(|(s, _)| s)
 }
 
 #[pyfunction]
-#[pyo3(signature = (obs_json, deck, opp_model, budget_s=8.0, max_iters=100000, c=1.4, seed=0, use_net=true))]
-fn choose_policy(obs_json: &str, deck: Vec<i32>, opp_model: Vec<i32>, budget_s: f64, max_iters: u32, c: f64, seed: u64, use_net: bool) -> PyResult<(Vec<i32>, Vec<f32>)> {
-    do_root(obs_json, deck, opp_model, budget_s, max_iters, c, seed, use_net)
+#[pyo3(signature = (obs_json, deck, opp_model, budget_s=8.0, max_iters=100000, c=1.4, seed=0, use_net=true, slot=0))]
+fn choose_policy(obs_json: &str, deck: Vec<i32>, opp_model: Vec<i32>, budget_s: f64, max_iters: u32, c: f64, seed: u64, use_net: bool, slot: u32) -> PyResult<(Vec<i32>, Vec<f32>)> {
+    do_root(obs_json, deck, opp_model, budget_s, max_iters, c, seed, use_net, slot)
+}
+
+#[pyfunction]
+fn init_net2(npz_path: &str) -> PyResult<bool> {
+    match net::Net::load(npz_path) { Some(n) => { let _ = NET2.set(n); Ok(true) } None => Ok(false) }
 }
 
 #[pyfunction]
@@ -493,6 +499,7 @@ fn engine_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(choose_policy, m)?)?;
     m.add_function(wrap_pyfunction!(last_sims, m)?)?;
     m.add_function(wrap_pyfunction!(init_net, m)?)?;
+    m.add_function(wrap_pyfunction!(init_net2, m)?)?;
     m.add_function(wrap_pyfunction!(featurize_debug, m)?)?;
     m.add_function(wrap_pyfunction!(policy_value_debug, m)?)?;
     Ok(())
