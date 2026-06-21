@@ -5,15 +5,15 @@
 #   cd ~/tempo && nohup bash scripts/az_rust_loop.sh 120 > /dev/null 2>&1 &
 cd "$(dirname "$0")/.."
 N="${1:-300}"
-W=16
+W=14
 mkdir -p net/ckpt_rust data/selfplay_rust
 [ -f net/model.pt ] || cp net/bc_model.pt net/model.pt 2>/dev/null
 [ -f net/model.npz ] || ./scripts/run.sh -m train.export_npz net/model.pt net/model.npz
 for c in $(seq 1 "$N"); do
   ts=$(date +%H:%M:%S)
-  ./scripts/run.sh -m train.selfplay_rust --pv net/model.npz --games 220 --budget 0.3 --workers "$W" >> az_rust.log 2>&1
+  timeout 600 ./scripts/run.sh -m train.selfplay_rust --pv net/model.npz --games 180 --budget 0.3 --workers "$W" >> az_rust.log 2>&1
   tail -n 40000 data/selfplay_rust/records.jsonl > data/selfplay_rust/r.tmp 2>/dev/null && mv data/selfplay_rust/r.tmp data/selfplay_rust/records.jsonl
-  ./scripts/run.sh -m train.train_net --bc data/bc/records.jsonl --selfplay data/selfplay_rust/records.jsonl --init net/model.pt --out net/model.pt --epochs 6 >> az_rust.log 2>&1
+  timeout 400 ./scripts/run.sh -m train.train_net --bc data/bc/records.jsonl --selfplay data/selfplay_rust/records.jsonl --init net/model.pt --out net/model.pt --epochs 6 >> az_rust.log 2>&1
   ./scripts/run.sh -m train.export_npz net/model.pt net/model.npz >> az_rust.log 2>&1
   cp net/model.npz "net/ckpt_rust/model_r${c}.npz"
   echo "[$ts] rust-cycle $c done; selfplay=$(wc -l < data/selfplay_rust/records.jsonl 2>/dev/null)" >> az_rust_progress.log
