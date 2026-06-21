@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# Rust
+/target/
+engine_rs/target/
+**/*.rs.bk
+
+# Kaggle engine + data (downloaded, never committed — license)
+cg/
+**/cg/
+data/raw/
+data/episodes/
+*.tar.gz
+
+# Models / artifacts
+*.onnx
+*.pt
+*.ckpt
+checkpoints/
+wandb/
+
+# Reference clone (not ours)
+reference/
+
+# OS
+.DS_Store
