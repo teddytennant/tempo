@@ -31,3 +31,5 @@ reference/
 
 # OS
 .DS_Store
+data/decks_top/
+data/decks/sample.csv
