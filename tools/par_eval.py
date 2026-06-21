@@ -47,6 +47,24 @@ def _mk(spec, seed):
     import main as m
     if pilot == "floor":
         return m.floor_agent
+    if pilot == "rust":
+        import engine_rs, os as _os, json as _j
+        engine_rs.init(_os.path.abspath(_os.path.join(_ROOT, "cg", "libcg.so")))
+        budget = max(0.2, iters / 100.0)  # reuse --iters as centiseconds of budget
+        dd, oo = deck, (opp if opp else deck)
+
+        def rp(obs_dict, _dd=dd, _oo=oo, _b=budget, _s=seed):
+            try:
+                s = obs_dict.get("select"); c = obs_dict.get("current")
+                if (s and c and s.get("context") == 0 and s.get("maxCount") == 1
+                        and (s.get("minCount") or 0) <= 1 and len(s.get("option") or []) > 1):
+                    r = engine_rs.choose(_j.dumps(obs_dict), _dd, _oo, _b, 10**9, 1.4, _s)
+                    if isinstance(r, list) and r:
+                        return r
+            except Exception:
+                pass
+            return m.floor_agent(obs_dict)
+        return rp
     from search.mcts import MctsAgent
     rp = m.floor_select if rollout == "floor" else None
     pv = None
@@ -71,7 +89,7 @@ def _worker(task):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--deck0", required=True); ap.add_argument("--deck1", required=True)
-    ap.add_argument("--p0", default="mcts"); ap.add_argument("--p1", default="floor")
+    ap.add_argument("--p0", default="mcts"); ap.add_argument("--p1", default="floor")  # also: rust
     ap.add_argument("--opp0", default=None); ap.add_argument("--opp1", default=None)
     ap.add_argument("--iters0", type=int, default=60); ap.add_argument("--iters1", type=int, default=60)
     ap.add_argument("--rollout0", default="default"); ap.add_argument("--rollout1", default="default")

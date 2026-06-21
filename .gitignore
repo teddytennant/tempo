@@ -37,3 +37,6 @@ net/bc_model.pt
 data/bc/
 net/model.pt
 data/selfplay/
+
+engine_rs/target/
+*.whl

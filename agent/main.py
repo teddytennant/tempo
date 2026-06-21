@@ -305,6 +305,38 @@ try:
 except Exception:
     _mcts = None
 
+# Rust search core (~10× sims). Used for MAIN single-select decisions when the abi3 wheel loads;
+# falls back to the Python MCTS / floor on any error. Bundled as a wheel + the cg/ engine.
+import json as _json  # noqa: E402
+_RUST = None
+try:
+    from cg.api import search_begin as _real_cg_marker  # real engine only (mock lacks it)
+    _have_real_cg = True
+except Exception:
+    _have_real_cg = False
+if _have_real_cg:
+    try:
+        import engine_rs as _er  # noqa: E402
+        _h = os.path.dirname(os.path.abspath(__file__))
+        for _lp in [os.path.join(_h, "cg", "libcg.so"), "cg/libcg.so", "/kaggle_simulations/agent/cg/libcg.so"]:
+            if os.path.exists(_lp):
+                _er.init(os.path.abspath(_lp))
+                _RUST = _er
+                break
+    except Exception:
+        _RUST = None
+
+
+def _main_single(obs_dict):
+    try:
+        sel = obs_dict.get("select"); cur = obs_dict.get("current")
+        if not sel or not cur:
+            return False
+        return (sel.get("context") == 0 and sel.get("maxCount") == 1
+                and (sel.get("minCount") or 0) <= 1 and len(sel.get("option") or []) > 1)
+    except Exception:
+        return False
+
 
 def agent(obs_dict):
     global _time_spent, _last_turn
@@ -332,6 +364,11 @@ def agent(obs_dict):
     try:
         if remaining <= 2.0:
             sel = floor_agent(obs_dict)            # out of clock — cheap heuristic
+        elif _RUST is not None and _main_single(obs_dict):
+            pm = min(_PER_MOVE_CAP_S, max(0.2, remaining * 0.05))
+            sel = _RUST.choose(_json.dumps(obs_dict), my_deck, _opp_model or my_deck, pm, 1000000000, 1.4, 0)
+            if not (isinstance(sel, list) and len(sel) >= 1):
+                sel = floor_agent(obs_dict)
         else:
             _mcts.time_budget_s = min(_PER_MOVE_CAP_S, max(0.1, remaining * 0.05))
             sel = _mcts(obs_dict)
