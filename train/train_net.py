@@ -80,9 +80,11 @@ def main():
         print("no data"); return
     idx = torch.randperm(n); ntr = int(n * 0.92)
     tr, va = idx[:ntr], idx[ntr:]
-    net = PolicyValueNet()
+    dev = "cuda" if torch.cuda.is_available() else "cpu"
+    print("device:", dev)
+    net = PolicyValueNet().to(dev)
     if a.init and os.path.exists(a.init):
-        net.load_state_dict(torch.load(a.init, map_location="cpu")["state"])
+        net.load_state_dict(torch.load(a.init, map_location=dev)["state"])
         print("warm-started from", a.init)
     opt = torch.optim.Adam(net.parameters(), lr=a.lr)
 
@@ -91,17 +93,18 @@ def main():
         tot_c = tot = 0
         for i in range(0, len(ix), a.bs):
             b = ix[i:i + a.bs]
-            s, v = net(G[b], O[b], M[b])
-            logp = torch.log_softmax(s.masked_fill(~M[b], -1e9), dim=1)
-            ploss = -(T[b] * logp).sum(1)
-            ploss = (ploss * W[b]).mean()
-            vloss = F.mse_loss(v, V[b])
+            gb, ob, mb, tb, vb, wb = G[b].to(dev), O[b].to(dev), M[b].to(dev), T[b].to(dev), V[b].to(dev), W[b].to(dev)
+            s, v = net(gb, ob, mb)
+            logp = torch.log_softmax(s.masked_fill(~mb, -1e9), dim=1)
+            ploss = -(tb * logp).sum(1)
+            ploss = (ploss * wb).mean()
+            vloss = F.mse_loss(v, vb)
             loss = ploss + 0.5 * vloss
             if train:
                 opt.zero_grad(); loss.backward(); opt.step()
             else:
-                pred = s.masked_fill(~M[b], -1e9).argmax(1)
-                tgt = T[b].argmax(1)
+                pred = s.masked_fill(~mb, -1e9).argmax(1)
+                tgt = tb.argmax(1)
                 tot_c += (pred == tgt).sum().item(); tot += len(b)
         return tot_c / max(1, tot)
 
