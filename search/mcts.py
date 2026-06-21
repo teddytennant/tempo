@@ -57,13 +57,15 @@ def _a_basic_pokemon(deck):
 
 
 class _Node:
-    __slots__ = ("children", "visits", "wins", "n")
+    __slots__ = ("children", "visits", "wins", "n", "P", "expanded")
 
     def __init__(self):
         self.children = {}   # key -> _Node
         self.visits = {}     # key -> int
-        self.wins = {}       # key -> float
+        self.wins = {}       # key -> float (Q sum)
         self.n = 0           # times this decision node was traversed
+        self.P = {}          # key -> prior probability (PUCT mode)
+        self.expanded = False
 
     def ucb_pick(self, keys, c):
         logn = math.log(self.n + 1)
@@ -78,12 +80,35 @@ class _Node:
                 best_v, best = u, k
         return best
 
+    def expand(self, keys, priors):
+        self.expanded = True
+        for k, p in zip(keys, priors):
+            self.P[k] = p
+            self.visits.setdefault(k, 0)
+            self.wins.setdefault(k, 0.0)
+
+    def child(self, k):
+        return self.children.setdefault(k, _Node())
+
+    def puct_pick(self, keys, c):
+        total = sum(self.visits.get(k, 0) for k in keys)
+        sq = math.sqrt(total + 1)
+        best, best_v = None, -1e18
+        for k in keys:
+            v = self.visits.get(k, 0)
+            q = self.wins[k] / v if v > 0 else 0.0
+            u = c * self.P.get(k, 1e-3) * sq / (1 + v)
+            if q + u > best_v:
+                best_v, best = q + u, k
+        return best
+
 
 class MctsAgent:
     def __init__(self, deck, iters=60, rollout_cap=200, c=1.4, seed=0,
                  fallback=None, search_contexts=(MAIN_CTX,), time_budget_s=None,
-                 opp_model=None, rollout_policy=None):
+                 opp_model=None, rollout_policy=None, pv=None):
         self.deck = list(deck)
+        self.pv = pv            # policy_value(obs)->(priors,value); enables AlphaZero-style PUCT
         # Opponent model for determinization: the deck we ASSUME the opponent plays. On the
         # ladder the field is dominated by one archetype, so modelling that (not a mirror of our
         # own deck) makes the search realistic. Defaults to our deck (mirror) if unspecified.
@@ -167,6 +192,41 @@ class MctsAgent:
                 and int(sel.context) in self.search_contexts
                 and sel.maxCount == 1 and sel.minCount <= 1 and len(sel.option) > 1)
 
+    # ---- AlphaZero-style determinized iteration (net priors + value, no rollout) ----
+    def _iterate_puct(self, obs, our_index, root):
+        ss = search_begin(obs, *self._determinize(obs))
+        node = root
+        path = []
+        value = 0.0
+        while True:
+            o = ss.observation
+            if _terminal(o):
+                value = _value_for(o, our_index)   # [0,1]
+                break
+            if not self._searchable(o, our_index):
+                ss = search_step(ss.searchId, self._default_sel(o))
+                continue
+            keys = [_canon(opt) for opt in o.select.option]
+            if not node.expanded:
+                # Net POLICY as the PUCT prior (strong); leaf value from a reliable rollout
+                # (the weak value head misleads search until it's trained on far more data).
+                priors, _ = self.pv(o)
+                if not priors or len(priors) != len(keys):
+                    priors = [1.0 / len(keys)] * len(keys)
+                node.expand(keys, priors)
+                value = self._rollout(ss, our_index)   # [0,1], lethal-aware
+                break
+            k = node.puct_pick(keys, self.c)
+            i = keys.index(k)
+            path.append((node, k))
+            node = node.child(k)
+            ss = search_step(ss.searchId, [i])
+        for nd, k in path:
+            nd.n += 1
+            nd.visits[k] = nd.visits.get(k, 0) + 1
+            nd.wins[k] = nd.wins.get(k, 0.0) + value
+        return value
+
     # ---- one determinized iteration ----
     def _iterate(self, obs, our_index, root_stats):
         ss = search_begin(obs, *self._determinize(obs))
@@ -216,16 +276,17 @@ class MctsAgent:
 
         our_index = obs.current.yourIndex
         root = _Node()
+        iterate = self._iterate_puct if self.pv is not None else self._iterate
         try:
             if self.time_budget_s is not None:
                 deadline = time.monotonic() + self.time_budget_s
                 done = 0
                 while done < self.iters and time.monotonic() < deadline:
-                    self._iterate(obs, our_index, root)
+                    iterate(obs, our_index, root)
                     done += 1
             else:
                 for _ in range(self.iters):
-                    self._iterate(obs, our_index, root)
+                    iterate(obs, our_index, root)
             search_end()
         except Exception:
             search_end()
