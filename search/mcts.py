@@ -82,7 +82,7 @@ class _Node:
 class MctsAgent:
     def __init__(self, deck, iters=60, rollout_cap=200, c=1.4, seed=0,
                  fallback=None, search_contexts=(MAIN_CTX,), time_budget_s=None,
-                 opp_model=None):
+                 opp_model=None, rollout_policy=None):
         self.deck = list(deck)
         # Opponent model for determinization: the deck we ASSUME the opponent plays. On the
         # ladder the field is dominated by one archetype, so modelling that (not a mirror of our
@@ -95,6 +95,7 @@ class MctsAgent:
         self.fallback = fallback        # callable(obs_dict)->selection for non-searched decisions
         self.search_contexts = set(search_contexts)
         self.time_budget_s = time_budget_s  # wall-clock cap per move; None = use fixed iters
+        self.rollout_policy = rollout_policy  # callable(Observation)->selection; None = lethal+random
 
     # ---- determinization ----
     def _determinize(self, obs):
@@ -149,7 +150,14 @@ class MctsAgent:
                 return _value_for(o, our_index)
             if o.select is None:
                 return 0.5
-            cur = search_step(cur.searchId, self._rollout_sel(o))
+            if self.rollout_policy is not None:
+                try:
+                    sel = self.rollout_policy(o)
+                except Exception:
+                    sel = self._rollout_sel(o)
+            else:
+                sel = self._rollout_sel(o)
+            cur = search_step(cur.searchId, sel)
         # undecided after cap: neutral
         return 0.5
 

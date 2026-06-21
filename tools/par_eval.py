@@ -41,14 +41,16 @@ def _rand_pilot(obs_dict):
 
 
 def _mk(spec, seed):
-    pilot, deck, opp, iters = spec
+    pilot, deck, opp, iters, rollout = spec
     if pilot == "random":
         return _rand_pilot
     import main as m
     if pilot == "floor":
         return m.floor_agent
     from search.mcts import MctsAgent
-    return MctsAgent(deck, iters=iters, seed=seed, opp_model=opp, fallback=m.floor_agent)
+    rp = m.floor_select if rollout == "floor" else None
+    return MctsAgent(deck, iters=iters, seed=seed, opp_model=opp,
+                     fallback=m.floor_agent, rollout_policy=rp)
 
 
 def _worker(task):
@@ -68,13 +70,14 @@ def main():
     ap.add_argument("--p0", default="mcts"); ap.add_argument("--p1", default="floor")
     ap.add_argument("--opp0", default=None); ap.add_argument("--opp1", default=None)
     ap.add_argument("--iters0", type=int, default=60); ap.add_argument("--iters1", type=int, default=60)
+    ap.add_argument("--rollout0", default="default"); ap.add_argument("--rollout1", default="default")
     ap.add_argument("--games", type=int, default=32); ap.add_argument("--workers", type=int, default=14)
     ap.add_argument("--seed", type=int, default=0); ap.add_argument("--label", default="")
     a = ap.parse_args()
 
     d0, d1 = _read(a.deck0), _read(a.deck1)
-    p0spec = (a.p0, d0, _read(a.opp0), a.iters0)
-    p1spec = (a.p1, d1, _read(a.opp1), a.iters1)
+    p0spec = (a.p0, d0, _read(a.opp0), a.iters0, a.rollout0)
+    p1spec = (a.p1, d1, _read(a.opp1), a.iters1, a.rollout1)
     tasks = [(a.seed + i, p0spec, p1spec, d0, d1) for i in range(a.games)]
 
     ctx = get_context("spawn")
