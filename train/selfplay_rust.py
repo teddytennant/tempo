@@ -32,6 +32,7 @@ def _worker(task):
     engine_rs.init_net(os.path.abspath(cfg["pv"]))
     _random.seed(seed)
     da, db, la, lb, budget = cfg["da"], cfg["db"], cfg["la"], cfg["lb"], cfg["budget"]
+    diverse = cfg.get("diverse", False)  # diverse field: opp=vanilla, record only our side (0)
     decks, opps = [da, db], [la, lb]
     obs, start = battle_start(da, db)
     if obs is None:
@@ -48,10 +49,11 @@ def _worker(task):
             ai = cur.yourIndex if cur is not None else 0
             sel = o.select
             if sel.context == 0 and sel.maxCount == 1 and len(sel.option) > 1 and (sel.minCount or 0) <= 1:
+                un = (ai == 0) if diverse else True  # diverse: our side uses net, opp uses vanilla
                 try:
-                    s, pol = engine_rs.choose_policy(json.dumps(obs), decks[ai], opps[ai], budget, 10**9, 1.4, seed, True)
+                    s, pol = engine_rs.choose_policy(json.dumps(obs), decks[ai], opps[ai], budget, 10**9, 1.4, seed, un)
                     pick = s if (isinstance(s, list) and s) else [0]
-                    if pol:
+                    if pol and (not diverse or ai == 0):
                         recs.append((obs, pol, ai))
                 except Exception:
                     pick = [0]
@@ -69,6 +71,7 @@ def main():
     ap.add_argument("--pv", required=True)
     ap.add_argument("--deck_a", default=os.path.join(_ROOT, "data/decks/abomasnow.csv"))
     ap.add_argument("--deck_b", default=os.path.join(_ROOT, "data/decks/mega_lucario.csv"))
+    ap.add_argument("--opp_decks", default=None, help="comma-sep CSVs; diverse field (opp=vanilla, record only our side)")
     ap.add_argument("--budget", type=float, default=0.3)
     ap.add_argument("--games", type=int, default=200)
     ap.add_argument("--workers", type=int, default=14)
@@ -76,12 +79,19 @@ def main():
     ap.add_argument("--out", default=os.path.join(_ROOT, "data/selfplay_rust/records.jsonl"))
     a = ap.parse_args()
     os.makedirs(os.path.dirname(a.out), exist_ok=True)
-    cfg = dict(da=_read(a.deck_a), db=_read(a.deck_b), la=_read(a.deck_b), lb=_read(a.deck_a),
-               budget=a.budget, pv=a.pv)
+    da = _read(a.deck_a)
+    if a.opp_decks:
+        opp_list = [_read(p) for p in a.opp_decks.split(",")]
+        tasks = [(a.seed + i, dict(da=da, db=opp_list[i % len(opp_list)], la=opp_list[i % len(opp_list)],
+                                   lb=da, budget=a.budget, pv=a.pv, diverse=True)) for i in range(a.games)]
+        print(f"diverse self-play: {len(opp_list)} opponents, recording only Lucario side")
+    else:
+        cfg = dict(da=da, db=_read(a.deck_b), la=_read(a.deck_b), lb=da, budget=a.budget, pv=a.pv)
+        tasks = [(a.seed + i, cfg) for i in range(a.games)]
     ctx = get_context("spawn")
     n = 0
     with open(a.out, "a") as f, ctx.Pool(a.workers) as pool:
-        for recs in pool.imap_unordered(_worker, [(a.seed + i, cfg) for i in range(a.games)]):
+        for recs in pool.imap_unordered(_worker, tasks):
             for r in recs:
                 f.write(json.dumps(r) + "\n"); n += 1
     print(f"wrote {n} net-in-Rust self-play records -> {a.out}")

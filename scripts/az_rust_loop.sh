@@ -12,13 +12,15 @@ OPP="${OPP:-data/decks/mega_lucario.csv}"
 BC="${BC:-data/bc/records.jsonl}"
 MPT="${MPT:-net/model.pt}"; MNPZ="${MNPZ:-net/model.npz}"
 SP="${SP:-data/selfplay_rust}"; CK="${CK:-net/ckpt_rust}"; TAG="${TAG:-abom}"
+OPPS="${OPPS:-}"  # comma-sep opponent decks -> diverse-field self-play (record only our side)
 PROG="az_${TAG}_progress.log"; LOG="az_${TAG}.log"
 mkdir -p "$CK" "$SP"
 [ -f "$MNPZ" ] || ./scripts/run.sh -m train.export_npz "$MPT" "$MNPZ"
+if [ -n "$OPPS" ]; then SPARG="--opp_decks $OPPS"; else SPARG="--deck_b $OPP"; fi
 for c in $(seq 1 "$N"); do
   ts=$(date +%H:%M:%S)
-  timeout 600 ./scripts/run.sh -m train.selfplay_rust --pv "$MNPZ" --deck_a "$DECK" --deck_b "$OPP" \
-    --games 180 --budget 0.3 --workers "$W" --out "$SP/records.jsonl" >> "$LOG" 2>&1
+  timeout 600 ./scripts/run.sh -m train.selfplay_rust --pv "$MNPZ" --deck_a "$DECK" $SPARG \
+    --games 200 --budget 0.3 --workers "$W" --out "$SP/records.jsonl" >> "$LOG" 2>&1
   tail -n 40000 "$SP/records.jsonl" > "$SP/r.tmp" 2>/dev/null && mv "$SP/r.tmp" "$SP/records.jsonl"
   timeout 400 ./scripts/run.sh -m train.train_net --bc "$BC" --selfplay "$SP/records.jsonl" \
     --init "$MPT" --out "$MPT" --epochs 6 >> "$LOG" 2>&1
