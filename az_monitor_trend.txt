@@ -2,3 +2,4 @@ c7: 50.0%
 c8: 70.8%
 c8 @150iters: 75.0% (net edge HOLDS at high sims)
 c9: 79.2%
+rust climb vs c9: c5=58.3% c7=62.5% c14=70.0%
