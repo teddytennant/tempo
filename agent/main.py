@@ -256,10 +256,27 @@ _PER_MOVE_CAP_S = 6.0
 _time_spent = 0.0
 _last_turn = 0
 
+def _load_ids(path):
+    with open(path) as f:
+        return [int(x) for x in f.read().splitlines() if x.strip()]
+
+
+# Opponent model: the archetype we assume the field plays (for determinized search). Bundled as
+# opp_model.csv; falls back to a mirror of our own deck if absent.
+_opp_model = None
+try:
+    for _p in [os.path.join(os.path.dirname(os.path.abspath(__file__)), "opp_model.csv"),
+               "opp_model.csv", "/kaggle_simulations/agent/opp_model.csv"]:
+        if os.path.exists(_p):
+            _opp_model = _load_ids(_p)
+            break
+except Exception:
+    _opp_model = None
+
 try:
     from search.mcts import MctsAgent  # noqa: E402
-    _mcts = MctsAgent(my_deck, iters=100000, rollout_cap=200,
-                      fallback=floor_agent, time_budget_s=_PER_MOVE_CAP_S)
+    _mcts = MctsAgent(my_deck, iters=100000, rollout_cap=200, fallback=floor_agent,
+                      time_budget_s=_PER_MOVE_CAP_S, opp_model=_opp_model)
 except Exception:
     _mcts = None
 

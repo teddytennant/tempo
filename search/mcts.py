@@ -81,8 +81,13 @@ class _Node:
 
 class MctsAgent:
     def __init__(self, deck, iters=60, rollout_cap=200, c=1.4, seed=0,
-                 fallback=None, search_contexts=(MAIN_CTX,), time_budget_s=None):
+                 fallback=None, search_contexts=(MAIN_CTX,), time_budget_s=None,
+                 opp_model=None):
         self.deck = list(deck)
+        # Opponent model for determinization: the deck we ASSUME the opponent plays. On the
+        # ladder the field is dominated by one archetype, so modelling that (not a mirror of our
+        # own deck) makes the search realistic. Defaults to our deck (mirror) if unspecified.
+        self.opp_pool = list(opp_model) if opp_model else list(deck)
         self.iters = iters
         self.rollout_cap = rollout_cap
         self.c = c
@@ -97,15 +102,16 @@ class MctsAgent:
         yi = st.yourIndex
         me = st.players[yi]
         opp = st.players[1 - yi]
-        pool = self.deck * 2
-        your_deck = pool[: max(me.deckCount, 0)]
-        your_prize = pool[: len(me.prize)]
-        opp_deck = pool[: max(opp.deckCount, 0)]
-        opp_prize = pool[: len(opp.prize)]
-        opp_hand = pool[: max(opp.handCount, 0)]
+        mine = self.deck * 2
+        theirs = self.opp_pool * 2
+        your_deck = mine[: max(me.deckCount, 0)]
+        your_prize = mine[: len(me.prize)]
+        opp_deck = theirs[: max(opp.deckCount, 0)]
+        opp_prize = theirs[: len(opp.prize)]
+        opp_hand = theirs[: max(opp.handCount, 0)]
         opp_active = []
         if opp.active and opp.active[0] is None:
-            opp_active = [_a_basic_pokemon(self.deck)]
+            opp_active = [_a_basic_pokemon(self.opp_pool)]
         return your_deck, your_prize, opp_deck, opp_prize, opp_hand, opp_active
 
     # ---- policies ----

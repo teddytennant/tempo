@@ -9,6 +9,7 @@ TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
 REPO="$(cd "$SRC/.." && pwd)"
 cp "$SRC/main.py" "$TMP/main.py"
 cp "$SRC/deck.csv" "$TMP/deck.csv"
+[ -f "$SRC/opp_model.csv" ] && cp "$SRC/opp_model.csv" "$TMP/opp_model.csv"
 # Bundle the search package (MCTS over the native engine API) so main.py can import it.
 mkdir -p "$TMP/search"
 cp "$REPO/search/__init__.py" "$REPO/search/mcts.py" "$TMP/search/"
