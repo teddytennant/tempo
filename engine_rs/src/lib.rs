@@ -393,15 +393,13 @@ fn parse_basics(json: &str) -> std::collections::HashSet<i64> {
 }
 fn pyerr(m: &str) -> PyErr { pyo3::exceptions::PyRuntimeError::new_err(m.to_string()) }
 
-#[pyfunction]
-#[pyo3(signature = (obs_json, deck, opp_model, budget_s=8.0, max_iters=100000, c=1.4, seed=0, use_net=true))]
-fn choose(obs_json: &str, deck: Vec<i32>, opp_model: Vec<i32>, budget_s: f64, max_iters: u32, c: f64, seed: u64, use_net: bool) -> PyResult<Vec<i32>> {
+fn do_root(obs_json: &str, deck: Vec<i32>, opp_model: Vec<i32>, budget_s: f64, max_iters: u32, c: f64, seed: u64, use_net: bool) -> PyResult<(Vec<i32>, Vec<f32>)> {
     let m = ENGINE.get().ok_or_else(|| pyerr("engine not init"))?;
     let e = m.lock().map_err(|_| pyerr("lock"))?;
     let obs: Obs = serde_json::from_str(obs_json).map_err(|e| pyerr(&e.to_string()))?;
     let cur = obs.current.as_ref().ok_or_else(|| pyerr("no current"))?;
     let sel = obs.select.as_ref().ok_or_else(|| pyerr("no select"))?;
-    if !searchable(cur, sel) { return Ok((0..sel.min.max(0) as i32).collect()); }
+    if !searchable(cur, sel) { return Ok(((0..sel.min.max(0) as i32).collect(), vec![])); }
     let sbi = obs.sbi.clone().ok_or_else(|| pyerr("no sbi"))?;
     let our = cur.yi;
     let me = &cur.players[our as usize];
@@ -438,7 +436,23 @@ fn choose(obs_json: &str, deck: Vec<i32>, opp_model: Vec<i32>, budget_s: f64, ma
         let v = *root.visits.get(&i).unwrap_or(&0) as i64;
         if v > bv { bv = v; best = i; }
     }
-    Ok(vec![best])
+    let total: u32 = (0..nopt as i32).map(|i| *root.visits.get(&i).unwrap_or(&0)).sum();
+    let policy: Vec<f32> = if total > 0 {
+        (0..nopt as i32).map(|i| *root.visits.get(&i).unwrap_or(&0) as f32 / total as f32).collect()
+    } else { vec![1.0 / nopt as f32; nopt] };
+    Ok((vec![best], policy))
+}
+
+#[pyfunction]
+#[pyo3(signature = (obs_json, deck, opp_model, budget_s=8.0, max_iters=100000, c=1.4, seed=0, use_net=true))]
+fn choose(obs_json: &str, deck: Vec<i32>, opp_model: Vec<i32>, budget_s: f64, max_iters: u32, c: f64, seed: u64, use_net: bool) -> PyResult<Vec<i32>> {
+    do_root(obs_json, deck, opp_model, budget_s, max_iters, c, seed, use_net).map(|(s, _)| s)
+}
+
+#[pyfunction]
+#[pyo3(signature = (obs_json, deck, opp_model, budget_s=8.0, max_iters=100000, c=1.4, seed=0, use_net=true))]
+fn choose_policy(obs_json: &str, deck: Vec<i32>, opp_model: Vec<i32>, budget_s: f64, max_iters: u32, c: f64, seed: u64, use_net: bool) -> PyResult<(Vec<i32>, Vec<f32>)> {
+    do_root(obs_json, deck, opp_model, budget_s, max_iters, c, seed, use_net)
 }
 
 #[pyfunction]
@@ -476,6 +490,7 @@ fn policy_value_debug(obs_json: &str) -> PyResult<(Vec<f32>, f32)> {
 fn engine_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(init, m)?)?;
     m.add_function(wrap_pyfunction!(choose, m)?)?;
+    m.add_function(wrap_pyfunction!(choose_policy, m)?)?;
     m.add_function(wrap_pyfunction!(last_sims, m)?)?;
     m.add_function(wrap_pyfunction!(init_net, m)?)?;
     m.add_function(wrap_pyfunction!(featurize_debug, m)?)?;
