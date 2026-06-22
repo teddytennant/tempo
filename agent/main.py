@@ -48,6 +48,10 @@ except Exception:
     corrected_deck = None
     detect_opp = None
 _tracker = None
+try:
+    from scorer import best_options as score_options   # rich heuristic policy (beats MCTS)
+except Exception:
+    score_options = None
 
 # Card / attack tables (read-only engine views).
 _card_table = {c.cardId: c for c in all_card_data()}
@@ -377,6 +381,14 @@ def agent(obs_dict):
             _last_turn = turn
     except Exception:
         pass
+    # PRIMARY policy: rich heuristic scorer (beats our MCTS 63% h2h; fast + robust)
+    if score_options is not None:
+        try:
+            sel = score_options(obs_dict)
+            if isinstance(sel, list) and sel:
+                return sel
+        except Exception:
+            pass
     o_obs = None
     if PrizeTracker is not None:
         if _tracker is None:
