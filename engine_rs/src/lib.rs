@@ -238,6 +238,8 @@ fn pick_default(e: &Engine, obs: &Obs, rng: &mut SmallRng) -> Vec<i32> {
     idx[..k].to_vec()
 }
 
+thread_local! { static EVAL_VER: std::cell::Cell<u32> = std::cell::Cell::new(1); }
+
 // Positional eval for non-terminal leaves: prize race dominates (the win condition), then board HP
 // and hand. Far more informative than a random rollout that times out to 0.5.
 fn heuristic(obs: &Obs, our: i64) -> f64 {
@@ -249,14 +251,30 @@ fn heuristic(obs: &Obs, our: i64) -> f64 {
         .filter_map(|x| x.as_ref()).map(|x| x.hp).sum::<i64>() as f64;
     let sum_en = |p: &Player| p.active.iter().chain(p.bench.iter())
         .filter_map(|x| x.as_ref()).map(|x| x.energy.len() as i64).sum::<i64>() as f64;
+    // The ACTIVE is what attacks and gets attacked — its readiness/health matters most.
+    let act_en = |p: &Player| p.active.get(0).and_then(|x| x.as_ref())
+        .map(|x| (x.energy.len() as f64).min(3.0)).unwrap_or(0.0);  // capped: enough to attack
+    let act_hp = |p: &Player| p.active.get(0).and_then(|x| x.as_ref()).map(|x| x.hp as f64).unwrap_or(0.0);
     let prize_diff = op.prize.len() as f64 - me.prize.len() as f64;  // + = we've taken more = ahead
     let hp_diff = sum_hp(me) - sum_hp(op);
-    let energy_diff = sum_en(me) - sum_en(op);   // attack-readiness: no energy, no prizes
+    let energy_diff = sum_en(me) - sum_en(op);
+    let act_ready_diff = act_en(me) - act_en(op);          // our attacker ready vs theirs
+    let act_hp_diff = act_hp(me) - act_hp(op);             // active matchup
     let hand_diff = (me.hand_count - op.hand_count) as f64;
-    let raw = 0.38 * (prize_diff / 6.0)
-        + 0.08 * (hp_diff / 400.0).clamp(-1.0, 1.0)
-        + 0.07 * (energy_diff / 8.0).clamp(-1.0, 1.0)
-        + 0.02 * (hand_diff / 10.0).clamp(-1.0, 1.0);
+    let ver = EVAL_VER.with(|v| v.get());
+    let raw = if ver == 0 {
+        0.38 * (prize_diff / 6.0)
+            + 0.08 * (hp_diff / 400.0).clamp(-1.0, 1.0)
+            + 0.07 * (energy_diff / 8.0).clamp(-1.0, 1.0)
+            + 0.02 * (hand_diff / 10.0).clamp(-1.0, 1.0)
+    } else {
+        0.36 * (prize_diff / 6.0)
+            + 0.06 * (hp_diff / 400.0).clamp(-1.0, 1.0)
+            + 0.04 * (energy_diff / 8.0).clamp(-1.0, 1.0)
+            + 0.07 * (act_ready_diff / 3.0).clamp(-1.0, 1.0)
+            + 0.05 * (act_hp_diff / 250.0).clamp(-1.0, 1.0)
+            + 0.02 * (hand_diff / 10.0).clamp(-1.0, 1.0)
+    };
     (0.5 + raw).clamp(0.02, 0.98)
 }
 
@@ -478,8 +496,9 @@ fn do_root(obs_json: &str, deck: Vec<i32>, opp_model: Vec<i32>, budget_s: f64, m
 }
 
 #[pyfunction]
-#[pyo3(signature = (obs_json, deck, opp_model, budget_s=8.0, max_iters=100000, c=1.4, seed=0, use_net=true, slot=0))]
-fn choose(obs_json: &str, deck: Vec<i32>, opp_model: Vec<i32>, budget_s: f64, max_iters: u32, c: f64, seed: u64, use_net: bool, slot: u32) -> PyResult<Vec<i32>> {
+#[pyo3(signature = (obs_json, deck, opp_model, budget_s=8.0, max_iters=100000, c=1.4, seed=0, use_net=true, slot=0, eval_ver=1))]
+fn choose(obs_json: &str, deck: Vec<i32>, opp_model: Vec<i32>, budget_s: f64, max_iters: u32, c: f64, seed: u64, use_net: bool, slot: u32, eval_ver: u32) -> PyResult<Vec<i32>> {
+    EVAL_VER.with(|v| v.set(eval_ver));
     do_root(obs_json, deck, opp_model, budget_s, max_iters, c, seed, use_net, slot).map(|(s, _)| s)
 }
 
