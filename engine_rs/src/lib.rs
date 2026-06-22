@@ -82,7 +82,11 @@ struct Player {
     #[serde(rename = "handCount", default)] hand_count: i64,
 }
 #[derive(Deserialize)]
-struct Pokemon { id: i64, hp: i64 }
+struct Pokemon {
+    id: i64,
+    hp: i64,
+    #[serde(rename = "energyCards", default)] energy: Vec<serde_json::Value>,
+}
 
 #[derive(Deserialize)]
 struct AtkRow { #[serde(rename = "attackId")] id: i64, #[serde(default)] damage: i64 }
@@ -243,11 +247,15 @@ fn heuristic(obs: &Obs, our: i64) -> f64 {
     let op = &cur.players[(1 - our) as usize];
     let sum_hp = |p: &Player| p.active.iter().chain(p.bench.iter())
         .filter_map(|x| x.as_ref()).map(|x| x.hp).sum::<i64>() as f64;
+    let sum_en = |p: &Player| p.active.iter().chain(p.bench.iter())
+        .filter_map(|x| x.as_ref()).map(|x| x.energy.len() as i64).sum::<i64>() as f64;
     let prize_diff = op.prize.len() as f64 - me.prize.len() as f64;  // + = we've taken more = ahead
     let hp_diff = sum_hp(me) - sum_hp(op);
+    let energy_diff = sum_en(me) - sum_en(op);   // attack-readiness: no energy, no prizes
     let hand_diff = (me.hand_count - op.hand_count) as f64;
-    let raw = 0.40 * (prize_diff / 6.0)
+    let raw = 0.38 * (prize_diff / 6.0)
         + 0.08 * (hp_diff / 400.0).clamp(-1.0, 1.0)
+        + 0.07 * (energy_diff / 8.0).clamp(-1.0, 1.0)
         + 0.02 * (hand_diff / 10.0).clamp(-1.0, 1.0);
     (0.5 + raw).clamp(0.02, 0.98)
 }
