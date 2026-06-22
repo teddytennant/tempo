@@ -23,6 +23,22 @@ from cg.api import (
     all_attack, all_card_data, to_observation_class,
 )
 
+# Deck specialists (optional — generic path stands alone if these fail to import).
+try:
+    import crustle_rules as _crustle          # when agent/ is on sys.path (submission runtime)
+except Exception:
+    try:
+        from agent import crustle_rules as _crustle
+    except Exception:
+        _crustle = None
+try:
+    from lethal import lethal_move as _lethal_move
+except Exception:
+    try:
+        from agent.lethal import lethal_move as _lethal_move
+    except Exception:
+        _lethal_move = None
+
 # ── static engine tables (loaded once) ───────────────────────────────────────
 _CARD = {c.cardId: c for c in all_card_data()}
 _ATK = {a.attackId: a for a in all_attack()}
@@ -308,10 +324,33 @@ def best_options(obs_dict) -> list[int]:
         opp = state.players[opp_i]
         ctx = select.context
 
+        # Crustle wall specialist: when we're piloting the wall, use its card-id-gated scoring
+        # (and a verified multi-step lethal check) instead of the generic table. For every other
+        # deck this never triggers (no Dwebble/Crustle on our side), so the generic path is intact.
+        crustle = False
+        if _crustle is not None:
+            try:
+                crustle = _crustle.is_crustle_deck(state, me_i)
+            except Exception:
+                crustle = False
+
+        if crustle and ctx == SelectContext.MAIN and _lethal_move is not None:
+            try:
+                lm = _lethal_move(obs_dict, _crustle.CRUSTLE_DECK)
+                if isinstance(lm, list) and lm:
+                    return lm
+            except Exception:
+                pass
+
         scores = []
         for o in select.option:
             try:
-                if ctx == SelectContext.MAIN:
+                if crustle:
+                    if ctx == SelectContext.MAIN:
+                        scores.append(_crustle.score_main(obs, o, me_i))
+                    else:
+                        scores.append(_crustle.score_sub(obs, o, me_i, ctx))
+                elif ctx == SelectContext.MAIN:
                     scores.append(_score_main(obs, o, me, opp, me_i))
                 else:
                     scores.append(_score_sub(obs, o, ctx, me, opp, me_i, opp_i))
