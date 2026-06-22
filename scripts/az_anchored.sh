@@ -17,7 +17,7 @@ mkdir -p "$CK" "$SP"
 for c in $(seq 1 "$N"); do
   ts=$(date +%H:%M:%S)
   timeout 600 ./scripts/run.sh -m train.selfplay_rust --pv "$MNPZ" --deck_a "$DECK" --deck_b "$DECK" \
-    --games 200 --budget 0.4 --workers "$W" --out "$SP/records.jsonl" >> az_s2.log 2>&1
+    --games 200 --budget 0.9 --workers "$W" --out "$SP/records.jsonl" >> az_s2.log 2>&1
   tail -n 40000 "$SP/records.jsonl" > "$SP/r.tmp" 2>/dev/null && mv "$SP/r.tmp" "$SP/records.jsonl"
   timeout 400 ./scripts/run.sh -m train.train_net --bc "$BC" --selfplay "$SP/records.jsonl" \
     --init "$MPT" --anchor "$ANCHOR" --kl "$KL" --out "$MPT" --epochs 5 >> az_s2.log 2>&1
