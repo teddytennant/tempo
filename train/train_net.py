@@ -71,6 +71,8 @@ def main():
     ap.add_argument("--epochs", type=int, default=8)
     ap.add_argument("--bs", type=int, default=256)
     ap.add_argument("--lr", type=float, default=1e-3)
+    ap.add_argument("--anchor", default=None, help="frozen BC net to KL-anchor toward (prevents self-play drift)")
+    ap.add_argument("--kl", type=float, default=0.0, help="KL-anchor strength (beta)")
     a = ap.parse_args()
     torch.manual_seed(0)
 
@@ -87,6 +89,12 @@ def main():
         net.load_state_dict(torch.load(a.init, map_location=dev)["state"])
         print("warm-started from", a.init)
     opt = torch.optim.Adam(net.parameters(), lr=a.lr)
+    anchor = None
+    if a.anchor and os.path.exists(a.anchor) and a.kl > 0:
+        anchor = PolicyValueNet().to(dev)
+        anchor.load_state_dict(torch.load(a.anchor, map_location=dev)["state"])
+        anchor.eval()
+        print(f"KL-anchored to {a.anchor} (beta={a.kl})")
 
     def go(ix, train):
         ix = ix[torch.randperm(len(ix))] if train else ix
@@ -100,6 +108,11 @@ def main():
             ploss = (ploss * wb).mean()
             vloss = F.mse_loss(v, vb)
             loss = ploss + 0.5 * vloss
+            if anchor is not None:
+                with torch.no_grad():
+                    sa, _ = anchor(gb, ob, mb)
+                    pa = torch.softmax(sa.masked_fill(~mb, -1e9), dim=1)
+                loss = loss + a.kl * (-(pa * logp).sum(1)).mean()  # distill toward frozen BC
             if train:
                 opt.zero_grad(); loss.backward(); opt.step()
             else:
