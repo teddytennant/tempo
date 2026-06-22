@@ -376,7 +376,9 @@ def agent(obs_dict):
     except Exception:
         pass
     o_obs = None
-    if _tracker is not None:
+    if PrizeTracker is not None:
+        if _tracker is None:
+            _tracker = PrizeTracker(my_deck)   # lazy init if the deck-phase trigger was missed
         try:
             o_obs = to_observation_class(obs_dict)
             _tracker.update(o_obs, obs_dict)   # track prizes every frame
