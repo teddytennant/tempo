@@ -76,6 +76,7 @@ struct Cur {
 #[derive(Deserialize)]
 struct Player {
     #[serde(default)] active: Vec<Option<Pokemon>>,
+    #[serde(default)] bench: Vec<Option<Pokemon>>,
     #[serde(rename = "deckCount", default)] deck_count: i64,
     #[serde(default)] prize: Vec<serde_json::Value>,
     #[serde(rename = "handCount", default)] hand_count: i64,
@@ -233,14 +234,32 @@ fn pick_default(e: &Engine, obs: &Obs, rng: &mut SmallRng) -> Vec<i32> {
     idx[..k].to_vec()
 }
 
+// Positional eval for non-terminal leaves: prize race dominates (the win condition), then board HP
+// and hand. Far more informative than a random rollout that times out to 0.5.
+fn heuristic(obs: &Obs, our: i64) -> f64 {
+    let cur = match &obs.current { Some(c) => c, None => return 0.5 };
+    if cur.players.len() < 2 || our < 0 || our > 1 { return 0.5; }
+    let me = &cur.players[our as usize];
+    let op = &cur.players[(1 - our) as usize];
+    let sum_hp = |p: &Player| p.active.iter().chain(p.bench.iter())
+        .filter_map(|x| x.as_ref()).map(|x| x.hp).sum::<i64>() as f64;
+    let prize_diff = op.prize.len() as f64 - me.prize.len() as f64;  // + = we've taken more = ahead
+    let hp_diff = sum_hp(me) - sum_hp(op);
+    let hand_diff = (me.hand_count - op.hand_count) as f64;
+    let raw = 0.40 * (prize_diff / 6.0)
+        + 0.08 * (hp_diff / 400.0).clamp(-1.0, 1.0)
+        + 0.02 * (hand_diff / 10.0).clamp(-1.0, 1.0);
+    (0.5 + raw).clamp(0.02, 0.98)
+}
+
 fn rollout(e: &Engine, mut sid: i64, mut obs: Obs, our: i64, rng: &mut SmallRng, cap: u32) -> f64 {
     for _ in 0..cap {
         if let Some(c) = &obs.current { if c.result != -1 { return term_value(c.result, our); } }
-        if obs.select.is_none() { return 0.5; }
+        if obs.select.is_none() { return heuristic(&obs, our); }
         let pick = pick_default(e, &obs, rng);
-        match do_step(e, sid, &pick) { Some((s, o)) => { sid = s; obs = o; } None => return 0.5 }
+        match do_step(e, sid, &pick) { Some((s, o)) => { sid = s; obs = o; } None => return heuristic(&obs, our) }
     }
-    0.5
+    heuristic(&obs, our)
 }
 
 fn ucb_pick(node: &Node, nopt: usize, c: f64) -> i32 {
@@ -430,7 +449,7 @@ fn do_root(obs_json: &str, deck: Vec<i32>, opp_model: Vec<i32>, budget_s: f64, m
     while done < max_iters && deadline.elapsed().as_secs_f64() < budget_s {
         match netw {
             Some(nw) => iterate_net(&e, nw, &sbi, &det, our, &mut arena, c, &mut rng),
-            None => iterate(&e, &sbi, &det, our, &mut arena, c, &mut rng, 200),
+            None => iterate(&e, &sbi, &det, our, &mut arena, c, &mut rng, 30),
         }
         done += 1;
     }
