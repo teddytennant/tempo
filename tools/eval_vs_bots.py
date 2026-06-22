@@ -43,7 +43,12 @@ OUR_DECKS = ["crustle", "lucario_praxel", "starmie", "dunsparce"]
 # toward wall-breakers, so we add diverse, faithfully-ported frontier archetypes:
 #   dragapult   — skarin Dragapult ex spread/aggro (proactive multi-prize attacker)
 #   ragingbolt  — yakitori55 Raging Bolt ex energy-acceleration attacker
-BOTS = ["crustle", "crustle_hardened", "baseline950", "dragapult", "ragingbolt"]
+#   abomasnow   — kiyotah Mega Abomasnow ex control/tank (out-tanks, Riptide snipe)
+#   iono        — kiyotah Iono's Bellibolt ex Lightning energy-stacking engine
+# (the mossarimossari Dragapult notebook was rejected: identical scoring constants
+#  to dragapult above, so it would have added no matchup diversity.)
+BOTS = ["crustle", "crustle_hardened", "baseline950", "dragapult", "ragingbolt",
+        "abomasnow", "iono"]
 
 
 def _read_deck(path):
