@@ -23,7 +23,7 @@ for c in $(seq 1 "$N"); do
     --init "$MPT" --anchor "$ANCHOR" --kl "$KL" --out "$MPT" --epochs 5 >> az_s2.log 2>&1
   ./scripts/run.sh -m train.export_npz "$MPT" "$MNPZ" >> az_s2.log 2>&1
   cp "$MNPZ" "$CK/model_s2_${c}.npz"
-  fa=$(./scripts/run.sh -m tools.frontier_agreement --pv "$MNPZ" --bc "$BC" --n 1200 2>/dev/null | grep -oE '= [0-9.]+%' | head -1)
+  fa=$(./scripts/run.sh -m tools.frontier_agreement --pv "$MNPZ" --bc "$BC" --n 1200 2>&1 | grep -oE '[0-9]+\.[0-9]+%' | head -1)
   echo "[$ts] s2-cycle $c done (KL=$KL); frontier-agreement$fa; selfplay=$(wc -l < "$SP/records.jsonl" 2>/dev/null)" >> az_s2_progress.log
 done
 echo "AZ-S2 DONE" >> az_s2_progress.log
