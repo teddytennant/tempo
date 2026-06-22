@@ -60,6 +60,20 @@ except Exception:
     except Exception:
         _iono = None
 try:
+    import fezandipiti_rules as _fezandipiti     # Fezandipiti ex / Alakazam "Powerful Hand" combo specialist
+except Exception:
+    try:
+        from agent import fezandipiti_rules as _fezandipiti
+    except Exception:
+        _fezandipiti = None
+try:
+    import hops_snorlax_rules as _hops_snorlax   # Hop's Snorlax single-prize toolbox aggro/control specialist
+except Exception:
+    try:
+        from agent import hops_snorlax_rules as _hops_snorlax
+    except Exception:
+        _hops_snorlax = None
+try:
     from lethal import lethal_move as _lethal_move
 except Exception:
     try:
@@ -384,11 +398,23 @@ def best_options(obs_dict) -> list[int]:
             except Exception:
                 starmie = False
 
+        # Fezandipiti ex / Alakazam "Powerful Hand" combo specialist: the THIRD-place PTCG-Club list,
+        # the same Powerful Hand engine as the dunsparce list but with a Fezandipiti ex / Lillie's
+        # Determination / Wondrous Patch / Xerosic tech package. It SHARES the Alakazam core with the
+        # dunsparce list, so it is checked FIRST (its gate also requires a list-unique card) and the
+        # dunsparce gate below is suppressed when it fires — the two never both pilot the same deck.
+        fezandipiti = False
+        if not crustle and not lucario and not starmie and _fezandipiti is not None:
+            try:
+                fezandipiti = _fezandipiti.is_fezandipiti_deck(state, me_i)
+            except Exception:
+                fezandipiti = False
+
         # Alakazam "Powerful Hand" / Dudunsparce draw-combo specialist: only when we pilot that line
         # (signature disjoint from Crustle/Lucario/Starmie, so the id-gated paths never overlap). It
         # is the one deck that breaks the Crustle wall (Powerful Hand is non-ex damage counters).
         dunsparce = False
-        if not crustle and not lucario and not starmie and _dunsparce is not None:
+        if not crustle and not lucario and not starmie and not fezandipiti and _dunsparce is not None:
             try:
                 dunsparce = _dunsparce.is_dunsparce_deck(state, me_i)
             except Exception:
@@ -399,15 +425,27 @@ def best_options(obs_dict) -> list[int]:
         # overlap). This is the empirically strongest archetype on the board (it beats all four of our
         # other decks as an opponent), piloted here on our own side.
         iono = False
-        if not crustle and not lucario and not starmie and not dunsparce and _iono is not None:
+        if (not crustle and not lucario and not starmie and not dunsparce and not fezandipiti
+                and _iono is not None):
             try:
                 iono = _iono.is_iono_deck(state, me_i)
             except Exception:
                 iono = False
 
+        # Hop's Snorlax single-prize toolbox aggro/control specialist: only when we pilot the Hop's
+        # line (signature 304/311/878/879 disjoint from every other specialist, so the id-gated paths
+        # never overlap). This is the #2 frontier team's deck ("The Debauchery Tea Party", ~1358 Elo).
+        hops_snorlax = False
+        if (not crustle and not lucario and not starmie and not dunsparce and not fezandipiti
+                and not iono and _hops_snorlax is not None):
+            try:
+                hops_snorlax = _hops_snorlax.is_hops_snorlax_deck(state, me_i)
+            except Exception:
+                hops_snorlax = False
+
         # Specialist guard FIRST so it short-circuits before touching SelectContext.MAIN (which the
         # mock test engine does not define): when no specialist is active this whole gate is skipped.
-        if (crustle or lucario or starmie or dunsparce or iono) and _lethal_move is not None and ctx == SelectContext.MAIN:
+        if (crustle or lucario or starmie or dunsparce or iono or fezandipiti or hops_snorlax) and _lethal_move is not None and ctx == SelectContext.MAIN:
             try:
                 if crustle:
                     deck = _crustle.CRUSTLE_DECK
@@ -417,8 +455,12 @@ def best_options(obs_dict) -> list[int]:
                     deck = _starmie.STARMIE_DECK
                 elif dunsparce:
                     deck = _dunsparce.DUNSPARCE_DECK
-                else:
+                elif fezandipiti:
+                    deck = _fezandipiti.FEZANDIPITI_DECK
+                elif iono:
                     deck = _iono.IONO_DECK
+                else:
+                    deck = _hops_snorlax.HOPS_SNORLAX_DECK
                 lm = _lethal_move(obs_dict, deck)
                 if isinstance(lm, list) and lm:
                     return lm
@@ -453,6 +495,16 @@ def best_options(obs_dict) -> list[int]:
                         scores.append(_iono.score_main(obs, o, me_i))
                     else:
                         scores.append(_iono.score_sub(obs, o, me_i, ctx))
+                elif fezandipiti:
+                    if ctx == SelectContext.MAIN:
+                        scores.append(_fezandipiti.score_main(obs, o, me_i))
+                    else:
+                        scores.append(_fezandipiti.score_sub(obs, o, me_i, ctx))
+                elif hops_snorlax:
+                    if ctx == SelectContext.MAIN:
+                        scores.append(_hops_snorlax.score_main(obs, o, me_i))
+                    else:
+                        scores.append(_hops_snorlax.score_sub(obs, o, me_i, ctx))
                 elif ctx == SelectContext.MAIN:
                     scores.append(_score_main(obs, o, me, opp, me_i))
                 else:
