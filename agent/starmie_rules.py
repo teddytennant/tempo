@@ -24,7 +24,7 @@ from __future__ import annotations
 
 from collections import Counter
 
-from cg.api import AreaType, CardType, EnergyType, OptionType, Pokemon, SelectContext, all_attack, all_card_data
+from cg.api import AreaType, CardType, OptionType, Pokemon, SelectContext, all_attack, all_card_data
 
 # ── deck card IDs (verified via all_card_data against data/decks/starmie.csv) ──────────────────
 SNORUNT = 860            # basic, 70HP, evolves -> Mega Froslass ex
