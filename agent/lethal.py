@@ -19,6 +19,8 @@ It only runs when a win this turn is *plausible* (an attack is offered and the o
 """
 from __future__ import annotations
 
+import time as _time
+
 try:
     from cg.api import (
         AreaType, OptionType, SelectContext,
@@ -34,6 +36,11 @@ PRIZE_GATE = 2
 # Hard search caps — keep it well under the move clock even in pathological positions.
 _MAX_DEPTH = 10       # selections deep into the turn (attach/evolve/ability/attack + sub-selects)
 _NODE_BUDGET = 600    # total search_step calls per verification
+# Wall-clock deadline: the node budget alone let branchy endgames spend >1s of engine search_step
+# time (fuzz observed 1.26s). A hard time cap guarantees the verifier returns well under the
+# per-move clock no matter how expensive each engine step is — it just bails and the caller uses
+# its normal policy (which is already lethal-aware via scoring, so we lose nothing but the proof).
+_MAX_TIME_S = 0.25
 
 
 def _opp_prize_count(state, me_i: int) -> int:
@@ -114,10 +121,14 @@ def _selection_for(select, idx: int):
 
 
 class _Budget:
-    __slots__ = ("steps",)
+    __slots__ = ("steps", "deadline")
 
     def __init__(self):
         self.steps = 0
+        self.deadline = _time.monotonic() + _MAX_TIME_S
+
+    def exhausted(self) -> bool:
+        return self.steps >= _NODE_BUDGET or _time.monotonic() >= self.deadline
 
 
 def _dfs(search_id, obs, me_i: int, depth: int, budget: _Budget) -> bool:
@@ -142,7 +153,7 @@ def _dfs(search_id, obs, me_i: int, depth: int, budget: _Budget) -> bool:
     is_main = getattr(select, "context", None) == SelectContext.MAIN
 
     for idx in _order_options(select, me_i):
-        if budget.steps >= _NODE_BUDGET:
+        if budget.exhausted():
             return False
         # On the MAIN menu, never explore END for lethal (it just ends the turn).
         if is_main and select.option[idx].type == OptionType.END:
@@ -217,7 +228,7 @@ def lethal_move(obs_dict, decklist) -> list[int] | None:
         for idx in _order_options(root_select, me_i):
             if root_select.option[idx].type == OptionType.END:
                 continue
-            if budget.steps >= _NODE_BUDGET:
+            if budget.exhausted():
                 break
             sel = _selection_for(root_select, idx)
             try:
@@ -228,7 +239,11 @@ def lethal_move(obs_dict, decklist) -> list[int] | None:
             try:
                 if _dfs(child.searchId, child.observation, me_i, 1, budget):
                     # `idx` indexes root_select.option, which mirrors the live obs.select.option.
-                    return _selection_for(select, idx)
+                    # Guard the assumption: only return it if it's a legal index for the LIVE select
+                    # (else fall through to None so the caller's normal policy stays legal).
+                    if 0 <= idx < len(select.option):
+                        return _selection_for(select, idx)
+                    return None
             finally:
                 try:
                     search_release(child.searchId)
