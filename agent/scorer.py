@@ -46,6 +46,13 @@ except Exception:
     except Exception:
         _starmie = None
 try:
+    import dunsparce_rules as _dunsparce       # Alakazam Powerful Hand / Dudunsparce draw-combo specialist
+except Exception:
+    try:
+        from agent import dunsparce_rules as _dunsparce
+    except Exception:
+        _dunsparce = None
+try:
     from lethal import lethal_move as _lethal_move
 except Exception:
     try:
@@ -370,16 +377,28 @@ def best_options(obs_dict) -> list[int]:
             except Exception:
                 starmie = False
 
+        # Alakazam "Powerful Hand" / Dudunsparce draw-combo specialist: only when we pilot that line
+        # (signature disjoint from Crustle/Lucario/Starmie, so the id-gated paths never overlap). It
+        # is the one deck that breaks the Crustle wall (Powerful Hand is non-ex damage counters).
+        dunsparce = False
+        if not crustle and not lucario and not starmie and _dunsparce is not None:
+            try:
+                dunsparce = _dunsparce.is_dunsparce_deck(state, me_i)
+            except Exception:
+                dunsparce = False
+
         # Specialist guard FIRST so it short-circuits before touching SelectContext.MAIN (which the
         # mock test engine does not define): when no specialist is active this whole gate is skipped.
-        if (crustle or lucario or starmie) and _lethal_move is not None and ctx == SelectContext.MAIN:
+        if (crustle or lucario or starmie or dunsparce) and _lethal_move is not None and ctx == SelectContext.MAIN:
             try:
                 if crustle:
                     deck = _crustle.CRUSTLE_DECK
                 elif lucario:
                     deck = _lucario.LUCARIO_DECK
-                else:
+                elif starmie:
                     deck = _starmie.STARMIE_DECK
+                else:
+                    deck = _dunsparce.DUNSPARCE_DECK
                 lm = _lethal_move(obs_dict, deck)
                 if isinstance(lm, list) and lm:
                     return lm
@@ -404,6 +423,11 @@ def best_options(obs_dict) -> list[int]:
                         scores.append(_starmie.score_main(obs, o, me_i))
                     else:
                         scores.append(_starmie.score_sub(obs, o, me_i, ctx))
+                elif dunsparce:
+                    if ctx == SelectContext.MAIN:
+                        scores.append(_dunsparce.score_main(obs, o, me_i))
+                    else:
+                        scores.append(_dunsparce.score_sub(obs, o, me_i, ctx))
                 elif ctx == SelectContext.MAIN:
                     scores.append(_score_main(obs, o, me, opp, me_i))
                 else:
