@@ -410,8 +410,14 @@ fn do_root(obs_json: &str, deck: Vec<i32>, opp_model: Vec<i32>, budget_s: f64, m
         Some(None) => vec![*opp_model.iter().find(|id| e.basics.contains(&(**id as i64))).unwrap_or(&opp_model[0])],
         _ => vec![],
     };
+    // Our hidden cards. `deck` is sent ordered [prized..., remaining_deck...] (belief-corrected by
+    // Python via PrizeTracker); slice non-overlapping so the search never "draws" a prized/visible card.
+    let np = (me.prize.len() as usize).min(deck.len());
+    let nd = (me.deck_count as usize).min(deck.len().saturating_sub(np));
+    let your_prize: Vec<c_int> = deck[..np].iter().map(|&x| x as c_int).collect();
+    let your_deck: Vec<c_int> = deck[np..np + nd].iter().map(|&x| x as c_int).collect();
     let det = Det {
-        your_deck: take(&deck, me.deck_count), your_prize: take(&deck, me.prize.len() as i64),
+        your_deck, your_prize,
         opp_deck: take(&opp_model, op.deck_count), opp_prize: take(&opp_model, op.prize.len() as i64),
         opp_hand: take(&opp_model, op.hand_count), opp_active,
     };

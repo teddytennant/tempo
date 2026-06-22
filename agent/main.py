@@ -39,6 +39,14 @@ with open(_resolve_deck_path()) as _f:
 if len(my_deck) != 60:
     raise ValueError(f"deck.csv must have 60 ids, got {len(my_deck)}")
 
+try:
+    from prize_tracker import PrizeTracker
+    from belief import corrected_deck
+except Exception:
+    PrizeTracker = None
+    corrected_deck = None
+_tracker = None
+
 # Card / attack tables (read-only engine views).
 _card_table = {c.cardId: c for c in all_card_data()}
 _attack_cost = {a.attackId: len(a.energies or []) for a in all_attack()}
@@ -348,11 +356,12 @@ def _main_single(obs_dict):
 
 
 def agent(obs_dict):
-    global _time_spent, _last_turn
+    global _time_spent, _last_turn, _tracker
     try:
         if isinstance(obs_dict, dict) and obs_dict.get("select") is None:
             _time_spent = 0.0   # new game: reset the per-game clock budget
             _last_turn = 0
+            _tracker = PrizeTracker(my_deck) if PrizeTracker else None  # fresh prize tracker
             return my_deck
     except Exception:
         pass
@@ -366,6 +375,13 @@ def agent(obs_dict):
             _last_turn = turn
     except Exception:
         pass
+    o_obs = None
+    if _tracker is not None:
+        try:
+            o_obs = to_observation_class(obs_dict)
+            _tracker.update(o_obs, obs_dict)   # track prizes every frame
+        except Exception:
+            o_obs = None
     if _mcts is None:
         return floor_agent(obs_dict)
     t0 = _time.monotonic()
@@ -375,7 +391,15 @@ def agent(obs_dict):
             sel = floor_agent(obs_dict)            # out of clock — cheap heuristic
         elif _RUST is not None and _main_single(obs_dict):
             pm = min(_PER_MOVE_CAP_S, max(0.2, remaining * 0.05))
-            sel = _RUST.choose(_json.dumps(obs_dict), my_deck, _opp_model or my_deck, pm, 1000000000, 1.4, 0)
+            cdeck = my_deck
+            if corrected_deck is not None and o_obs is not None:
+                try:
+                    cd = corrected_deck(o_obs, my_deck, _tracker.prized_cards() if _tracker else None)
+                    if cd:
+                        cdeck = cd  # belief-corrected [prized..., remaining_deck...]
+                except Exception:
+                    cdeck = my_deck
+            sel = _RUST.choose(_json.dumps(obs_dict), cdeck, _opp_model or my_deck, pm, 1000000000, 1.4, 0)
             if not (isinstance(sel, list) and len(sel) >= 1):
                 sel = floor_agent(obs_dict)
         else:
