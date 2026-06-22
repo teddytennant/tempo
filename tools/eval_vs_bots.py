@@ -9,6 +9,12 @@ decklist, none of which call our scorer):
   * crustle           — dashimaki360 Day-1 #1 Crustle wall (~1140 LB)
   * crustle_hardened  — biohack44 Day-2 hardened Crustle wall
   * baseline950       — romanrozen Mega Lucario ex baseline (~950 LB)
+  * dragapult         — skarin Dragapult ex spread/aggro (proactive multi-prize)
+  * ragingbolt        — yakitori55 Raging Bolt ex energy-acceleration attacker
+
+The pool was Crustle-heavy (2 walls), which skewed conclusions toward wall-breakers;
+dragapult and ragingbolt add proactive, prize-racing archetypes so the win-rates
+reflect a balanced frontier field rather than just "can you crack a wall".
 
 For each of our decks (piloted by agent/scorer.best_options, which auto-fires the
 right deck specialist) we play N games per bot, alternating seats to remove the
@@ -33,7 +39,11 @@ _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 # Our tuned decks (csv stem under data/decks) and the bots (module under agent.bots).
 OUR_DECKS = ["crustle", "lucario_praxel", "starmie", "dunsparce"]
-BOTS = ["crustle", "crustle_hardened", "baseline950"]  # module = bot_<name>
+# module = bot_<name>. Crustle-heavy pool (2 walls + 1 Mega-Lucario) skewed results
+# toward wall-breakers, so we add diverse, faithfully-ported frontier archetypes:
+#   dragapult   — skarin Dragapult ex spread/aggro (proactive multi-prize attacker)
+#   ragingbolt  — yakitori55 Raging Bolt ex energy-acceleration attacker
+BOTS = ["crustle", "crustle_hardened", "baseline950", "dragapult", "ragingbolt"]
 
 
 def _read_deck(path):
@@ -44,6 +54,10 @@ def _read_deck(path):
 def _reset_bot_state(mod):
     """Bots carry module-global per-game state (attack plan / turn cache). Clear it
     so a worker that plays several games doesn't leak one game's plan into the next."""
+    if hasattr(mod, "reset"):
+        # New bots (dragapult/ragingbolt) expose an explicit reset() that clears all
+        # their per-game module globals (logs / prize composition / attack plan).
+        mod.reset()
     if hasattr(mod, "plan") and hasattr(mod, "AttackPlan"):
         mod.plan = mod.AttackPlan()
     if hasattr(mod, "pre_turn"):
