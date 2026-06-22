@@ -15,5 +15,5 @@ sub() {
 }
 sub agent/submission_dunsparce.tar.gz "tempo: Dunsparce/Alakazam draw-combo specialist (20xhand dmg, breaks walls). Rule-based scorer."
 sleep 30
-sub agent/submission_lucario_praxel.tar.gz "tempo: Mega Lucario ex aggro specialist. Rule-based scorer + lethal verifier."
+sub agent/submission_starmie.tar.gz "tempo: Mega Starmie/Froslass ex specialist + prize-tracking deck-search. Rule-based scorer."
 echo "DONE $(date)" >> submit_8pm_decks.log
