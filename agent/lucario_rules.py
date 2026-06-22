@@ -23,7 +23,19 @@ pilkwang), all descended from the official kiyotah sample agent:
     a KO outcome.
   - Boss's Orders gusts up a benched opponent only when that benched mon is the best KO/target.
   - Prize guard: when we are at our last 2-3 prizes, do not over-expose the 3-prize Mega-ex.
-  - Crustle (345) is immune to ex/Mega-ex damage -> never throw the ex into the wall.
+
+WALL MODE (the Crustle matchup, agent/bots/bot_crustle*). Crustle (345) has an ability that negates
+ALL damage from ex/Mega-ex attacks AND swings back for 120 (Superb Scissors) while its deck heals and
+tries to deck us out. Throwing the Mega Lucario ex into it whiffs for 0 every turn (the old 0/60 bug).
+When `_opp_active_ex_immune` sees the wall on the opponent's Active we switch plans (and ONLY then):
+  - Route through the NON-ex Hariyama (Wild Press 210 one-shots Crustle 150 / Dwebble 70, ignoring the
+    ex-immunity): search for + evolve the Makuhita->Hariyama line, pour energy into it, promote it
+    active, and Wild Press the wall every turn. Hero's Cape goes on Hariyama (250HP survives 120+recoil).
+  - Never attack the wall with the ex (scored below END); use Boss's Orders / Hariyama's Heave-Ho to
+    gust a NON-immune benched target (a Dwebble) up so the cheap ex Aura Jab (1E) can KO it.
+  - Anti-deck-out: suppress our own draw engine (Lillie / Carmine / Lunatone's Lunar Cycle) once the
+    deck is thin so the staller can't outlast us — we were milling ourselves out.
+This is fully gated on the wall being Active, so aggressive play vs every normal opponent is unchanged.
 """
 from __future__ import annotations
 
@@ -76,6 +88,14 @@ LUCARIO_ENERGY_GOAL = 2   # Aura Jab needs 1, Mega Brave needs 2 -> "ready" at 2
 HARIYAMA_ENERGY_GOAL = 3
 SOLROCK_ENERGY_GOAL = 1
 
+# Anti-deck-out: stall/wall decks (Crustle) win by outlasting us, so once our deck is this thin we
+# stop firing the draw engine (Lillie / Carmine / Lunatone's Lunar Cycle) that would mill us out.
+LOW_DECK_COUNT = 8
+# Vs the ex-wall the game is a long grind we can lose by decking out, and our draw engine burns
+# ~9 cards/turn (Lillie 6 + Lunatone 3). Against the wall we keep a MUCH larger deck buffer (and
+# lean on the non-milling search cards to find Hariyama instead of raw draw).
+WALL_DECK_GUARD = 12
+
 KEY_PIECES = {MEGA_LUCARIO, RIOLU, HEROS_CAPE}        # never discard if avoidable
 USEFUL_PIECES = {HARIYAMA, MAKUHITA, LUNATONE, SOLROCK, BOSS_ORDERS,
                  PREMIUM_POWER_PRO, FIGHTING_GONG, DUSK_BALL, POKE_PAD, SWITCH}
@@ -100,6 +120,27 @@ try:
     _ATK = {a.attackId: a for a in all_attack()}
 except Exception:
     _ATK = {}
+
+
+def _compute_ex_immune_ids():
+    """Card IDs whose ability prevents ALL damage from our ex/Mega-ex attacks (the wall).
+
+    Crustle (345) is the known case; we also scan the card DB so any future printing with the
+    same "Prevent all damage ... {ex}" ability is recognised without a code change."""
+    ids = {CRUSTLE}
+    for cid, c in _CARD.items():
+        try:
+            for s in (getattr(c, "skills", None) or []):
+                txt = (getattr(s, "text", "") or "").lower()
+                if "prevent all damage" in txt and "ex" in txt:
+                    ids.add(cid)
+        except Exception:
+            pass
+    return ids
+
+
+# Opponent actives that are immune to our ex/Mega-ex attacks (Mega Lucario whiffs into these).
+_EX_IMMUNE_IDS = _compute_ex_immune_ids()
 
 
 def _meta(card_id):
@@ -213,11 +254,36 @@ def _opp_active(state, me_i):
     return None
 
 
+def _is_ex(card_id) -> bool:
+    """True if this Pokemon is an ex / Mega-ex (its attack damage is negated by the ex-wall)."""
+    cd = _meta(card_id)
+    if cd is None:
+        return card_id == MEGA_LUCARIO
+    return bool(getattr(cd, "ex", False) or getattr(cd, "megaEx", False))
+
+
+def _opp_active_ex_immune(state, me_i) -> bool:
+    """True when the opponent's ACTIVE negates damage from our ex attacks (Crustle wall).
+
+    This is the trigger for "wall mode": our Mega Lucario ex does 0 effective damage to it, so we
+    must route the turn through the NON-ex Hariyama line (Wild Press 210) instead of throwing the
+    ex into the wall every turn. False for every normal opponent -> aggressive play is unchanged."""
+    oa = _opp_active(state, me_i)
+    return oa is not None and _id(oa) in _EX_IMMUNE_IDS
+
+
 def _my_prize_count(state, me_i) -> int:
     try:
         return len(state.players[me_i].prize)
     except Exception:
         return 6
+
+
+def _my_deck_count(state, me_i) -> int:
+    try:
+        return int(getattr(state.players[me_i], "deckCount", 999))
+    except Exception:
+        return 999
 
 
 def _f_energy_in_discard(state, me_i) -> int:
@@ -279,11 +345,23 @@ def score_main(obs, o, me_i) -> float:
     state = obs.current
     t = o.type
 
+    # Wall mode: the opponent's active is immune to our ex attacks (Crustle). When set, we route the
+    # whole turn through the non-ex Hariyama line instead of whiffing the Mega Lucario ex into it.
+    wall = _opp_active_ex_immune(state, me_i)
+
     if t == OptionType.EVOLVE:
         # Evolving Riolu -> Mega Lucario ex is the single biggest tempo gain; do it before attaching
         # energy so the energy lands on (and stays on) the 340HP Mega. Hariyama next.
         card = _get(obs, AreaType.HAND, o.index, me_i)
         cid = _id(card)
+        if wall:
+            # Against the ex-wall the Hariyama line is our ONLY damage source -> evolve it first.
+            # (Makuhita -> Hariyama also fires Heave-Ho Catcher, gusting the wall off the active.)
+            if cid == HARIYAMA:
+                return 2800.0
+            if cid == MEGA_LUCARIO:
+                return 2500.0
+            return 2300.0
         if cid == MEGA_LUCARIO:
             return 2600.0
         if cid == HARIYAMA:
@@ -305,8 +383,14 @@ def score_main(obs, o, me_i) -> float:
                 return base
             return 700.0              # deep bench: no rush
 
-        # Hero's Cape: armour the main attacker (active Mega Lucario / Riolu).
+        # Hero's Cape: armour the main attacker. Vs the wall, a +100HP Hariyama (250HP) survives a
+        # Superb Scissors (120) AND its own Wild Press recoil (70), so it gets multiple KOs -> cape
+        # the Hariyama line, not the ex (which can't break the wall anyway).
         if cid == HEROS_CAPE:
+            if wall:
+                if _bench_has_id(state, me_i, HARIYAMA) or _id(active) == HARIYAMA:
+                    return 1750.0
+                return 700.0
             if _id(active) in _LUCARIO_LINE:
                 return 1750.0
             return 900.0
@@ -318,8 +402,14 @@ def score_main(obs, o, me_i) -> float:
             return 1450.0
 
         # Draw supporters: keep the hand flowing (only one supporter per turn; engine gates it).
+        # But against a deck-out staller, drawing into a thin deck loses us the game -> stop drawing.
         if cid in (LILLIE, CARMINE):
-            return -1.0 if getattr(state, "supporterPlayed", False) else 1400.0
+            if getattr(state, "supporterPlayed", False):
+                return -1.0
+            guard = WALL_DECK_GUARD if wall else LOW_DECK_COUNT
+            if _my_deck_count(state, me_i) <= guard:
+                return -1.0
+            return 1400.0
 
         # Boss's Orders: gust only when a benched opponent is the best target (else save it).
         if cid == BOSS_ORDERS:
@@ -328,6 +418,12 @@ def score_main(obs, o, me_i) -> float:
             opp = state.players[1 - me_i]
             bench = [b for b in (opp.bench or []) if b is not None]
             oa = _opp_active(state, me_i)
+            # Against the ex-wall, gust a benched (non-immune) target up so our Mega Lucario ex can
+            # KO it -> the ex stays relevant by routing AROUND the wall, not just through Hariyama.
+            if wall and bench and _id(active) in _LUCARIO_LINE:
+                non_immune = [b for b in bench if _id(b) not in _EX_IMMUNE_IDS]
+                if non_immune:
+                    return 1800.0
             if bench:
                 best_bench = max(_opponent_value(b) for b in bench)
                 active_val = _opponent_value(oa) if oa is not None else 0.0
@@ -354,17 +450,55 @@ def score_main(obs, o, me_i) -> float:
             return -1.0 if getattr(state, "stadiumPlayed", False) else 400.0
 
         if cid == SWITCH:
+            # In wall mode, free-switch a benched Hariyama into the active spot so it sits there
+            # accumulating energy and Wild Presses the wall the moment it reaches 3E (the active ex
+            # is dead weight vs the wall). Otherwise Switch is rarely worth it.
+            if wall and _id(active) in _LUCARIO_LINE and _bench_has_id(state, me_i, HARIYAMA):
+                return 1800.0
             return 300.0   # only meaningfully ranked when a benched attacker is better (rare)
         return 600.0
 
     if t == OptionType.ABILITY:
-        # Lunatone's Lunar Cycle (energy accel), Hariyama's evolve helper, etc. Fire them early.
+        # Lunatone's Lunar Cycle draws 3 by pitching a Basic F energy — great early, but vs the wall
+        # it both mills us toward deck-out AND discards the F energy Hariyama needs, so don't fire it
+        # in wall mode (rely on search). Otherwise suppress only once our deck is thin.
+        card = _get(obs, o.area, o.index, me_i)
+        if _id(card) == LUNATONE:
+            if wall:
+                return -1.0
+            if _my_deck_count(state, me_i) <= LOW_DECK_COUNT:
+                return -1.0
         return 2100.0
 
     if t == OptionType.ATTACH:
         card = _get(obs, o.area, o.index, me_i)
         active = _my_active(state, me_i)
         active_id = _id(active)
+
+        # Wall mode: the ex can't damage the wall, so pour energy into the non-ex Hariyama, whose Wild
+        # Press (3E/210) is the only repeatable answer (one-shots both Crustle 150 and Dwebble 70 on
+        # the active spot every turn). Solrock (Cosmic Beam, 1E/70) is a cheap backup vs Dwebbles.
+        if wall:
+            if o.inPlayArea == AreaType.ACTIVE:
+                if active_id == HARIYAMA:
+                    return 1700.0 if _energy_count(active) < HARIYAMA_ENERGY_GOAL else 1050.0
+                if active_id in _LUCARIO_LINE:
+                    return 900.0   # ex active can't damage the wall -> don't sink energy here
+                if active_id == SOLROCK:
+                    return 1400.0 if _energy_count(active) < SOLROCK_ENERGY_GOAL else 1000.0
+                return 1000.0
+            if o.inPlayArea == AreaType.BENCH:
+                tgt = _get(obs, o.inPlayArea, o.inPlayIndex, me_i)
+                tid = _id(tgt)
+                if tid == HARIYAMA:
+                    return 1700.0 if _energy_count(tgt) < HARIYAMA_ENERGY_GOAL else 1010.0
+                if tid in _LUCARIO_LINE:
+                    return 900.0
+                if tid == SOLROCK:
+                    return 1200.0 if _energy_count(tgt) < SOLROCK_ENERGY_GOAL else 1000.0
+                return 1005.0
+            return 1000.0
+
         # Concentrate energy on the ACTIVE main attacker until it can swing, then pre-fuel a bench
         # Lucario, then top-ups / support. The whole plan is to power ONE attacker fast.
         if o.inPlayArea == AreaType.ACTIVE:
@@ -396,11 +530,10 @@ def score_main(obs, o, me_i) -> float:
         active = _my_active(state, me_i)
         dmg = _attack_damage(active, o.attackId, oa)
 
-        # Crustle (345) negates damage from our Mega-ex -> never waste the ex on the wall.
-        if _id(oa) == CRUSTLE:
-            ad = _meta(_id(active))
-            if ad is not None and getattr(ad, "megaEx", False):
-                return -50.0
+        # The wall (Crustle) negates damage from our ex/Mega-ex attacks -> never waste the ex on it
+        # (this whiff was the 0/60 bug). Scored below END so we'd rather set up than swing for 0.
+        if wall and _is_ex(_id(active)):
+            return -50.0
 
         score = 100.0 + min(max(dmg, 0), 300) * 0.3
         if oa is not None and dmg > 0 and dmg >= (oa.hp or 0):
@@ -422,7 +555,12 @@ def score_main(obs, o, me_i) -> float:
         # Aggro stays put — unless we're stuck with a non-attacker active while a Lucario/Hariyama
         # that can swing sits benched.
         active = _my_active(state, me_i)
-        if _id(active) not in _LUCARIO_LINE and _id(active) != HARIYAMA:
+        aid = _id(active)
+        # Wall mode: our ex active is dead weight vs the wall -> retreat to promote a benched
+        # Hariyama so it can Wild Press through (Switch is preferred when in hand, see PLAY).
+        if wall and aid in _LUCARIO_LINE and _bench_has_id(state, me_i, HARIYAMA):
+            return 260.0
+        if aid not in _LUCARIO_LINE and aid != HARIYAMA:
             if _bench_has_id(state, me_i, MEGA_LUCARIO) or _bench_has_id(state, me_i, HARIYAMA):
                 return 250.0
         return -1.0
@@ -442,6 +580,10 @@ def score_sub(obs, o, me_i, context) -> float:
     opp_i = 1 - me_i
     t = o.type
     score = 2000.0
+
+    # Wall mode (opponent active is ex-immune): we win only through the non-ex Hariyama line, so our
+    # searches/placements must dig for Hariyama + Makuhita + energy, not the dead ex line.
+    wall = _opp_active_ex_immune(state, me_i)
 
     # Turn order: an aggressive deck wants to go FIRST to start the Riolu->Mega clock a turn sooner.
     if t == OptionType.YES:
@@ -465,8 +607,20 @@ def score_sub(obs, o, me_i, context) -> float:
         if card is not None:
             if context in PLACEMENT_CTX:
                 score += 500.0
-                # Place / fetch / promote the attacker line preferentially.
-                if cid == MEGA_LUCARIO:
+                # Place / fetch / promote the attacker line preferentially. Vs the wall the Hariyama
+                # line (Makuhita -> Hariyama) is the attacker, so it leapfrogs the dead ex line.
+                if wall:
+                    if cid == HARIYAMA:
+                        score += 180.0
+                    elif cid == MAKUHITA:
+                        score += 150.0
+                    elif cid in (SOLROCK, LUNATONE):
+                        score += 60.0
+                    elif cid == MEGA_LUCARIO:
+                        score += 40.0
+                    elif cid == RIOLU:
+                        score += 30.0
+                elif cid == MEGA_LUCARIO:
                     score += 160.0
                 elif cid == RIOLU:
                     score += 120.0
@@ -476,17 +630,45 @@ def score_sub(obs, o, me_i, context) -> float:
                     score += 40.0
                 if _is_basic_pokemon(cid) and _my_bench_count(state, me_i) <= 0:
                     score += 400.0   # empty bench -> a benchable Basic is the priority fetch
-            elif context == SelectContext.TO_HAND and cid in (RIOLU, MEGA_LUCARIO):
-                score += 150.0   # search effects: grab the attacker line
+            elif context == SelectContext.TO_HAND:
+                # Search effects (Poké Pad / Dusk Ball / Fighting Gong): grab what wins the game.
+                if wall:
+                    # vs the wall, assemble the Hariyama line (Wild Press is the only answer) + energy.
+                    if cid == HARIYAMA:
+                        score += 320.0
+                    elif cid == MAKUHITA:
+                        score += 260.0
+                    elif cid == BASIC_F:
+                        score += 200.0
+                    elif cid in (RIOLU, MEGA_LUCARIO):
+                        score += 20.0   # the ex line can't break the wall -> low priority
+                elif cid in (RIOLU, MEGA_LUCARIO):
+                    score += 150.0   # normal: grab the ex attacker line
 
             if isinstance(card, Pokemon):
                 if getattr(o, "playerIndex", me_i) == opp_i:
                     # Targeting the opponent (gust / damage / boss): hit their most valuable mon.
                     score += 500.0 if o.area == AreaType.ACTIVE else 100.0
                     score += _opponent_value(card)
+                    # Gusting a benched opponent up (Boss's Orders / Hariyama's Heave-Ho) vs the
+                    # wall: pull a NON-immune target our ex can actually KO (a Dwebble), never
+                    # another ex-immune wall (which the ex still can't touch).
+                    if (context in (SelectContext.SWITCH, SelectContext.TO_ACTIVE)
+                            and cid in _EX_IMMUNE_IDS and _opp_active_ex_immune(state, me_i)):
+                        score -= 1000.0
                 else:
                     if context in HEAL_CTX:
                         score += max(0, (getattr(card, "maxHp", 0) or 0) - (getattr(card, "hp", 0) or 0))
+                    elif (context in (SelectContext.SWITCH, SelectContext.TO_ACTIVE)
+                          and _opp_active_ex_immune(state, me_i)):
+                        # Choosing our new active against the ex-wall: send up the non-ex Hariyama
+                        # (it can Wild Press through), never the ex (which whiffs for 0). Prefer a
+                        # Hariyama that already has enough energy to swing this turn.
+                        score += getattr(card, "hp", 0) or 0
+                        if cid == HARIYAMA:
+                            score += 200.0 + (300.0 if _energy_count(card) >= HARIYAMA_ENERGY_GOAL else 0.0)
+                        elif cid in _LUCARIO_LINE:
+                            score -= 300.0
                     else:
                         score += getattr(card, "hp", 0) or 0
                         if cid == MEGA_LUCARIO:
