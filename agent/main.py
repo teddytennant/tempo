@@ -42,9 +42,11 @@ if len(my_deck) != 60:
 try:
     from prize_tracker import PrizeTracker
     from belief import corrected_deck
+    from opp_detect import detect_opp
 except Exception:
     PrizeTracker = None
     corrected_deck = None
+    detect_opp = None
 _tracker = None
 
 # Card / attack tables (read-only engine views).
@@ -401,7 +403,13 @@ def agent(obs_dict):
                         cdeck = cd  # belief-corrected [prized..., remaining_deck...]
                 except Exception:
                     cdeck = my_deck
-            sel = _RUST.choose(_json.dumps(obs_dict), cdeck, _opp_model or my_deck, pm, 1000000000, 1.4, 0)
+            opp = _opp_model or my_deck
+            if detect_opp is not None and o_obs is not None:
+                try:
+                    opp = detect_opp(o_obs, opp)   # match opponent's revealed cards to the right deck
+                except Exception:
+                    pass
+            sel = _RUST.choose(_json.dumps(obs_dict), cdeck, opp, pm, 1000000000, 1.4, 0)
             if not (isinstance(sel, list) and len(sel) >= 1):
                 sel = floor_agent(obs_dict)
         else:
