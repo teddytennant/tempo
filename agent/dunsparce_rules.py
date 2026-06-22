@@ -175,6 +175,34 @@ def _p_energy_count(p) -> int:
         return 0
 
 
+# Dragapult ex spread/aggro line (Dreepy -> Drakloak -> Dragapult ex). Phantom Dive deals 200 to our
+# Active AND spreads 6 damage counters (60) onto our bench, picking off the fragile Abra (50HP) /
+# Dunsparce (70HP) pieces before we can assemble + promote Alakazam. We adapt against this.
+DRAGAPULT_LINE = {119, 120, 121}
+
+
+def _facing_spread(state, me_i: int) -> bool:
+    """True when the opponent is a bench-spread aggro deck (Dragapult), detected from its revealed
+    board/discard. Gated inside the dunsparce specialist, and keyed only on the Dragapult line, so it
+    can never alter how we pilot any other deck or how the deck plays against any other opponent."""
+    try:
+        opp = state.players[1 - me_i]
+        for p in (list(opp.active or []) + list(opp.bench or [])):
+            if p is None:
+                continue
+            if _id(p) in DRAGAPULT_LINE:
+                return True
+            for c in (getattr(p, "preEvolution", None) or []):
+                if _id(c) in DRAGAPULT_LINE:
+                    return True
+        for c in (opp.discard or []):
+            if _id(c) in DRAGAPULT_LINE:
+                return True
+    except Exception:
+        return False
+    return False
+
+
 def is_dunsparce_deck(state, me_i: int) -> bool:
     """True iff our side is piloting the Alakazam / Dudunsparce line (one of its mons is visible)."""
     try:
@@ -298,6 +326,36 @@ def _alakazam_ready(state, me_i) -> bool:
     return _id(a) == ALAKAZAM and _p_energy_count(a) >= ALAKAZAM_ENERGY_GOAL
 
 
+def _p_available(state, me_i) -> bool:
+    """A {P} energy is already in reach for the Alakazam line: attached to a line piece, or sitting in
+    hand ready to attach. Powerful Hand needs exactly one — when we have none, fetching it is the
+    single thing gating our first (and fastest) swing vs an aggro opponent."""
+    a = _my_active(state, me_i)
+    if _id(a) in ALAKAZAM_LINE and _p_energy_count(a) >= 1:
+        return True
+    for b in _my_bench(state, me_i):
+        if _id(b) in ALAKAZAM_LINE and _p_energy_count(b) >= 1:
+            return True
+    try:
+        return any(_id(c) in P_ENERGY for c in (state.players[me_i].hand or []))
+    except Exception:
+        return False
+
+
+def _swing_mode(state, me_i) -> bool:
+    """We have an ENERGISED Alakazam in play (Active OR benched) — so a fat-handed Powerful Hand is
+    imminent (this turn if it is Active, or the turn it is promoted after our wall dies). In this mode
+    we STOP playing hand-shrinking cards: every card held is +20 damage on the swing that wins the
+    game. This is the fix for assembling/promoting Alakazam and then firing it with a depleted hand."""
+    a = _my_active(state, me_i)
+    if _id(a) == ALAKAZAM and _p_energy_count(a) >= ALAKAZAM_ENERGY_GOAL:
+        return True
+    for b in _my_bench(state, me_i):
+        if _id(b) == ALAKAZAM and _p_energy_count(b) >= ALAKAZAM_ENERGY_GOAL:
+            return True
+    return False
+
+
 def _has_attack_option(obs) -> bool:
     try:
         return any(o.type == OptionType.ATTACK for o in obs.select.option)
@@ -361,6 +419,10 @@ def score_main(obs, o, me_i) -> float:
         bench_n = len(_my_bench(state, me_i))
         sup_done = bool(getattr(state, "supporterPlayed", False))
         stad_done = bool(getattr(state, "stadiumPlayed", False))
+        spread = _facing_spread(state, me_i)
+        # Once an energised Alakazam exists (Active or benched), preserve the hand for Powerful Hand:
+        # truly HOLD hand-shrinking cards (score below END) so the imminent swing stays maximal.
+        hold = swing or _swing_mode(state, me_i)
 
         # Rare Candy: Abra -> Alakazam, skipping Kadabra. Treat like the best evolve when an Abra is in
         # play and an Alakazam is in hand to land it on; otherwise it has no target -> don't waste it.
@@ -374,7 +436,14 @@ def score_main(obs, o, me_i) -> float:
         if cid == DAWN:                    # search Basic + Stage1 + Stage2 to hand: +3 (net +2)
             return -1.0 if sup_done else 1950.0
         if cid == HILDA:                   # search Evolution + Energy to hand: +2 (net +1)
-            return -1.0 if sup_done else 1850.0
+            if sup_done:
+                return -1.0
+            # Vs an aggro/spread opponent the race is decided by how fast we land the FIRST Powerful
+            # Hand, and the usual gate is a missing {P} energy (only 8 in the deck). Hilda is our one
+            # energy tutor that also grabs an Alakazam — fire it ahead of Dawn to complete the swing.
+            if spread and not _p_available(state, me_i):
+                return 2050.0
+            return 1850.0
         if cid == LANA_AID:                # recover up to 3 pieces from discard to hand
             if sup_done:
                 return -1.0
@@ -394,19 +463,38 @@ def score_main(obs, o, me_i) -> float:
         # Energy from hand is handled under ATTACH; PLAY of a Pokémon develops the board.
         if _is_basic_pokemon(cid):
             # Bench bodies feed the draw engine (Dunsparce) and the evolution line (Abra). Develop
-            # early; but on the swing turn a body costs a Powerful-Hand card, so hold it.
-            if swing:
-                return 40.0
+            # early; but once an energised Alakazam is online a new body just costs a Powerful-Hand
+            # card, so hold it unless the bench is empty (we always need a body to fall back on).
+            if hold:
+                # Keep the hand fat for Powerful Hand — but never run so thin that one Phantom Dive
+                # (200 to Active + bench spread) wipes our board and leaves nothing to promote. Vs
+                # spread, keep two backups, preferring the tanky Dunsparce (-> 140HP Dudunsparce) that
+                # shrugs off the spread, so there is always a body to re-arm the next Alakazam behind.
+                if bench_n <= 0:
+                    return 1800.0
+                if spread and bench_n < 2 and cid == DUNSPARCE:
+                    return 900.0   # a tanky 140HP-to-be backup, so a spread turn can't wipe us
+                return -1.0
             if bench_n <= 0:
                 return 1800.0
+            if spread:
+                # Keep the board WIDE (we still need bodies to promote when the Active dies) but TANKY:
+                # a benched Dunsparce becomes a 140HP Dudunsparce that shrugs off Phantom Dive's spread,
+                # whereas a 4th 50HP Abra just hands them an extra prize on a multi-KO turn. So keep
+                # developing Dunsparce, but stop stacking Abras past the two we need for two Alakazams.
+                if cid == DUNSPARCE:
+                    return 1500.0
+                abra_n = (1 if _id(active) == ABRA else 0) + sum(
+                    1 for b in _my_bench(state, me_i) if _id(b) == ABRA)
+                return 1500.0 if abra_n < 2 else 250.0
             if bench_n < 3:
                 return 1500.0
             return 500.0
 
         # Buddy-Buddy Poffin: 2 Basics to BENCH (Abra/Dunsparce) — the board engine, but -1 hand.
         if cid == BUDDY_POFFIN:
-            if swing:
-                return 40.0                # don't shrink the hand on the swing turn
+            if hold:
+                return -1.0 if bench_n > 0 else 1750.0
             if bench_n <= 1:
                 return 1750.0
             if bench_n <= 3:
@@ -428,8 +516,8 @@ def score_main(obs, o, me_i) -> float:
 
         # Enhanced Hammer: discard opponent Special Energy — disruption, but -1 hand.
         if cid == ENHANCED_HAMMER:
-            if swing:
-                return 40.0
+            if hold:
+                return -1.0   # disruption isn't worth 20 Powerful-Hand damage on the swing
             opp = state.players[1 - me_i]
             has_special = False
             try:
@@ -447,19 +535,27 @@ def score_main(obs, o, me_i) -> float:
 
         # Sacred Ash: anti-deckout recycling (matters very late) — and -1 hand.
         if cid == SACRED_ASH:
-            if swing:
-                return 30.0
             try:
                 if (state.players[me_i].deckCount or 0) <= 6:
-                    return 700.0
+                    return 700.0   # imminent deck-out overrides hand preservation
             except Exception:
                 pass
+            if hold:
+                return -1.0
             return 80.0
 
-        # Battle Cage: stadium, shields benches from spread counters. Situational; -1 hand.
+        # Battle Cage: stadium that PREVENTS damage counters on Benched Pokémon (both sides). This
+        # hard-counters Dragapult's Phantom Dive bench spread — with it up, the only damage that lands
+        # on us is the 200 to the Active, so our benched Alakazam line survives to promote and swing.
+        # Powerful Hand hits the opponent's ACTIVE (counters there are unaffected), so it costs us
+        # nothing on offense. Prioritise getting it down early under spread pressure.
         if cid == BATTLE_CAGE:
-            if swing or stad_done:
-                return -1.0 if stad_done else 30.0
+            if stad_done:
+                return -1.0
+            if hold:
+                return -1.0   # don't shrink the hand right before the swing
+            if spread:
+                return 1450.0   # under spread, get the bench shield down (just below the net-0 digs)
             return 400.0
 
         return 500.0
