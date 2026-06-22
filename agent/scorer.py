@@ -53,6 +53,13 @@ except Exception:
     except Exception:
         _dunsparce = None
 try:
+    import iono_rules as _iono                  # Iono's Bellibolt ex Lightning energy-stacking specialist
+except Exception:
+    try:
+        from agent import iono_rules as _iono
+    except Exception:
+        _iono = None
+try:
     from lethal import lethal_move as _lethal_move
 except Exception:
     try:
@@ -387,9 +394,20 @@ def best_options(obs_dict) -> list[int]:
             except Exception:
                 dunsparce = False
 
+        # Iono's Bellibolt ex Lightning energy-stacking specialist: only when we pilot the Iono line
+        # (signature disjoint from Crustle/Lucario/Starmie/Dunsparce, so the id-gated paths never
+        # overlap). This is the empirically strongest archetype on the board (it beats all four of our
+        # other decks as an opponent), piloted here on our own side.
+        iono = False
+        if not crustle and not lucario and not starmie and not dunsparce and _iono is not None:
+            try:
+                iono = _iono.is_iono_deck(state, me_i)
+            except Exception:
+                iono = False
+
         # Specialist guard FIRST so it short-circuits before touching SelectContext.MAIN (which the
         # mock test engine does not define): when no specialist is active this whole gate is skipped.
-        if (crustle or lucario or starmie or dunsparce) and _lethal_move is not None and ctx == SelectContext.MAIN:
+        if (crustle or lucario or starmie or dunsparce or iono) and _lethal_move is not None and ctx == SelectContext.MAIN:
             try:
                 if crustle:
                     deck = _crustle.CRUSTLE_DECK
@@ -397,8 +415,10 @@ def best_options(obs_dict) -> list[int]:
                     deck = _lucario.LUCARIO_DECK
                 elif starmie:
                     deck = _starmie.STARMIE_DECK
-                else:
+                elif dunsparce:
                     deck = _dunsparce.DUNSPARCE_DECK
+                else:
+                    deck = _iono.IONO_DECK
                 lm = _lethal_move(obs_dict, deck)
                 if isinstance(lm, list) and lm:
                     return lm
@@ -428,6 +448,11 @@ def best_options(obs_dict) -> list[int]:
                         scores.append(_dunsparce.score_main(obs, o, me_i))
                     else:
                         scores.append(_dunsparce.score_sub(obs, o, me_i, ctx))
+                elif iono:
+                    if ctx == SelectContext.MAIN:
+                        scores.append(_iono.score_main(obs, o, me_i))
+                    else:
+                        scores.append(_iono.score_sub(obs, o, me_i, ctx))
                 elif ctx == SelectContext.MAIN:
                     scores.append(_score_main(obs, o, me, opp, me_i))
                 else:
