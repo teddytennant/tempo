@@ -58,6 +58,40 @@ assert len(IONO_DECK) == 60
 # overlap.
 _SIGNATURE = {IONO_VOLTORB, IONO_TADBULB, IONO_BELLIBOLT_EX, IONO_WATTREL, IONO_KILOWATTREL}
 
+# ── tunable scoring weights ─────────────────────────────────────────────────────────────────────────
+# The Iono policy's behaviour is governed by a set of hand-tuned magic numbers scattered through the
+# scoring below. They are collected here as a single module-level dict so a held-out optimizer
+# (tools/optimize_iono.py) can perturb them without touching the control flow. The DEFAULTS below are
+# byte-identical to the original literals, so with the default table the play is unchanged.
+#
+#   * *_load_active / *_overload_active / *_first_energy / *_bench_setup are ATTACH-target weights
+#     (where Basic Lightning goes); they reorder energy distribution across the board.
+#   * voltorb_ready_energy / bellibolt_full_energy are ENERGY thresholds for "loaded enough".
+#   * voltaic_base_dmg / voltaic_per_energy model Voltaic Chain damage for lethal/switch-in gating.
+#   * search_* are sub-selection (deck-search / draw) "grab this piece first" priorities.
+WEIGHTS = {
+    # attach-target valuation (_score_attach_target)
+    "voltorb_load_active": 5000.0,      # empty/under-loaded Voltorb in the active spot
+    "voltorb_overload_active": 3000.0,  # keep loading an already-ready active Voltorb (no attack avail)
+    "voltorb_bench_setup": 1000.0,      # seed a benched Voltorb when no attacker exists yet
+    "bellibolt_load_active": 800.0,     # under-loaded Bellibolt ex in the active spot
+    "bellibolt_overload_active": 500.0, # keep loading an already-full active Bellibolt (no attack avail)
+    "wattrel_first_energy": 6000.0,     # first energy onto a benched Wattrel (powers Kilowattrel accel)
+    "kilowattrel_first_energy": 8000.0, # first energy onto Kilowattrel (energy-acceleration ability)
+    # energy thresholds
+    "voltorb_ready_energy": 2,          # Voltorb counts as an attacker / "loaded" at this many energy
+    "bellibolt_full_energy": 4,         # Bellibolt ex counts as "full" at this many energy
+    # Voltaic Chain damage model (Voltorb switch-in lethal gating)
+    "voltaic_base_dmg": 20,
+    "voltaic_per_energy": 20,
+    # sub-selection deck-search / draw "grab first" priorities (TO_HAND / TO_BENCH)
+    "search_voltorb": 110.0,
+    "search_tadbulb": 200.0,
+    "search_bellibolt": 250.0,
+    "search_wattrel": 320.0,
+    "search_kilowattrel": 300.0,
+}
+
 # ── card metadata (loaded once) ───────────────────────────────────────────────────────────────────
 try:
     _CARD = {c.cardId: c for c in all_card_data()}
@@ -174,7 +208,7 @@ def _build(obs, me_i: int) -> _Ctx:
         energy_count += _energies(p)
         if p.id == IONO_KILOWATTREL and _energies(p) > 0:
             can_ability = True
-        if p.id == IONO_VOLTORB and _energies(p) >= 2:
+        if p.id == IONO_VOLTORB and _energies(p) >= WEIGHTS["voltorb_ready_energy"]:
             active_attacker = True
     for p in my_state.bench:
         if p is None:
@@ -184,7 +218,7 @@ def _build(obs, me_i: int) -> _Ctx:
         energy_count += _energies(p)
         if p.id == IONO_KILOWATTREL and _energies(p) > 0:
             can_ability = True
-        if p.id == IONO_VOLTORB and _energies(p) >= 2:
+        if p.id == IONO_VOLTORB and _energies(p) >= WEIGHTS["voltorb_ready_energy"]:
             bench_attacker = True
 
     field_pokemon1 = field_counts[IONO_TADBULB] + field_counts[IONO_BELLIBOLT_EX]
@@ -296,25 +330,25 @@ def _score_attach_target(p, in_play_area, C: _Ctx) -> float:
     pid = p.id
     e = _energies(p)
     if pid == IONO_VOLTORB:
-        if e >= 2:
+        if e >= WEIGHTS["voltorb_ready_energy"]:
             if in_play_area == AreaType.ACTIVE and not _can_attack:
-                score += 3000
+                score += WEIGHTS["voltorb_overload_active"]
         else:
             if in_play_area == AreaType.ACTIVE:
-                score += 5000
+                score += WEIGHTS["voltorb_load_active"]
             elif C.bench_attacker or C.active_attacker:
                 score += 100
             else:
-                score += 1000
+                score += WEIGHTS["voltorb_bench_setup"]
     elif pid == IONO_TADBULB:
         score += 10 - e
     elif pid == IONO_BELLIBOLT_EX:
-        if e >= 4:
+        if e >= WEIGHTS["bellibolt_full_energy"]:
             if in_play_area == AreaType.ACTIVE and not _can_attack:
-                score += 500
+                score += WEIGHTS["bellibolt_overload_active"]
         else:
             if in_play_area == AreaType.ACTIVE:
-                score += 800
+                score += WEIGHTS["bellibolt_load_active"]
             elif C.bench_attacker or C.active_attacker:
                 score += 14 - e
             else:
@@ -323,12 +357,12 @@ def _score_attach_target(p, in_play_area, C: _Ctx) -> float:
         if e >= 1 or in_play_area == AreaType.ACTIVE:
             score += 10 - e
         else:
-            score += 6000
+            score += WEIGHTS["wattrel_first_energy"]
     elif pid == IONO_KILOWATTREL:
         if e >= 1:
             score += 11 - e
         else:
-            score += 8000
+            score += WEIGHTS["kilowattrel_first_energy"]
     return score
 
 
@@ -466,17 +500,17 @@ def score_sub(obs, o, me_i, context) -> float:
                 score -= card.hp
                 score -= energy * 100
             if cid == IONO_VOLTORB:
-                if 20 + C.energy_count * 20 >= C.op_active_hp:
+                if WEIGHTS["voltaic_base_dmg"] + C.energy_count * WEIGHTS["voltaic_per_energy"] >= C.op_active_hp:
                     score += 100000
                 else:
                     score += 1500
                 if energy >= 1:
                     score += 200
-                    if energy >= 2:
+                    if energy >= WEIGHTS["voltorb_ready_energy"]:
                         score += 10000
             elif cid == IONO_BELLIBOLT_EX:
                 score += 1000
-                if energy >= 4:
+                if energy >= WEIGHTS["bellibolt_full_energy"]:
                     score += 1000
             elif cid == IONO_TADBULB:
                 score += 10
@@ -489,18 +523,18 @@ def score_sub(obs, o, me_i, context) -> float:
                 if o.area == AreaType.DISCARD:
                     score += 100000
                 if C.field_counts[cid] == 0:
-                    score += 110
+                    score += WEIGHTS["search_voltorb"]
                 elif C.field_counts[cid] == 1 and C.op_prize >= 2:
                     score += 5
             elif cid == IONO_TADBULB:
                 if C.field_pokemon1 == 0:
-                    score += 200
+                    score += WEIGHTS["search_tadbulb"]
                 elif C.field_pokemon1 == 1:
                     if C.op_prize >= 3 or (C.op_prize >= 2 and C.field_counts[IONO_BELLIBOLT_EX] == 0):
                         score += 20
             elif cid == IONO_BELLIBOLT_EX:
                 if C.field_hand_counts[cid] == 0:
-                    score += 250
+                    score += WEIGHTS["search_bellibolt"]
                     if C.field_counts[IONO_TADBULB] > 0:
                         score += 300
                 elif C.field_hand_counts[cid] == 1:
@@ -510,12 +544,12 @@ def score_sub(obs, o, me_i, context) -> float:
                             score += 30
             elif cid == IONO_WATTREL:
                 if C.field_pokemon2 == 0:
-                    score += 320
+                    score += WEIGHTS["search_wattrel"]
                 elif C.field_pokemon2 == 1:
                     score += 15
             elif cid == IONO_KILOWATTREL:
                 if C.field_hand_counts[cid] == 0:
-                    score += 300
+                    score += WEIGHTS["search_kilowattrel"]
                     if C.field_counts[IONO_WATTREL] > 0:
                         score += 250
                 elif C.field_hand_counts[cid] == 1:
