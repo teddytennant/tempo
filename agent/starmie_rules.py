@@ -24,7 +24,9 @@ from __future__ import annotations
 
 from collections import Counter
 
-from cg.api import AreaType, CardType, OptionType, Pokemon, SelectContext, all_attack, all_card_data
+from cg.api import (
+    AreaType, CardType, EnergyType, OptionType, Pokemon, SelectContext, all_attack, all_card_data,
+)
 
 # ── deck card IDs (verified via all_card_data against data/decks/starmie.csv) ──────────────────
 SNORUNT = 860            # basic, 70HP, evolves -> Mega Froslass ex
@@ -60,6 +62,18 @@ CHILLY = 1239            # Snorunt 10
 MEGAS = {MEGA_STARMIE, MEGA_FROSLASS}
 BASICS = {STARYU, SNORUNT}
 _SIGNATURE = {SNORUNT, MEGA_FROSLASS, STARYU, MEGA_STARMIE}
+
+# Weakness-aware lines. Mega Starmie ex (1031) is WEAK TO LIGHTNING -> a Lightning attacker (Iono's
+# Bellibolt ex deck) OHKOs it through weakness and banks 3 prizes. Mega Froslass ex (861) is weak to
+# METAL, not Lightning, so vs a detected Lightning opponent we race with the Froslass line and keep
+# the Lightning-weak Starmie line off the active. These two opposite lines let us dodge the weakness
+# without giving up the deck's prize-race plan.
+FROSLASS_LINE = {SNORUNT, MEGA_FROSLASS}
+STARMIE_LINE = {STARYU, MEGA_STARMIE}
+try:
+    _LIGHTNING = int(EnergyType.LIGHTNING)
+except Exception:
+    _LIGHTNING = 4
 
 # Full 60-card decklist for the lethal verifier's determinization.
 STARMIE_DECK = (
@@ -249,6 +263,91 @@ def _opponent_value(p) -> float:
     return v
 
 
+# ── opponent archetype: Mega Abomasnow ex tank/control (kiyotah) ────────────────────────────────
+# Its line — Kyogre 721 / Snover 722 / Mega Abomasnow ex 723 — and its Surfing Beach stadium are
+# disjoint from every other CANDIDATE decklist (agent/opp_decks.py) AND from our own deck, so this
+# gate can ONLY fire vs the tank: the mirror and all other matchups are byte-for-byte unchanged.
+_ABOMA_SIGNATURE = {721, 722, 723}   # Kyogre / Snover / Mega Abomasnow ex (incl. pre-evolutions)
+_SURFING_BEACH = 1262                # the tank's stadium
+
+
+def _opp_is_aboma(state, me_i) -> bool:
+    """True iff the opponent is piloting the Mega Abomasnow ex tank/control deck."""
+    try:
+        op = state.players[1 - me_i]
+        for p in (list(op.active or []) + list(op.bench or [])):
+            if p is None:
+                continue
+            if _id(p) in _ABOMA_SIGNATURE:
+                return True
+            for c in (getattr(p, "preEvolution", None) or []):
+                if _id(c) in _ABOMA_SIGNATURE:
+                    return True
+        for c in (op.discard or []):
+            if _id(c) in _ABOMA_SIGNATURE:
+                return True
+        for c in (state.stadium or []):
+            if _id(c) == _SURFING_BEACH:
+                return True
+    except Exception:
+        return False
+    return False
+
+
+# ── opponent-archetype gating: Dragapult ex spread/aggro matchup ────────────────────────────────
+# We lose the Dragapult matchup ~30%: it Phantom-Dives (200 + six spread damage counters onto our
+# bench) and races prizes. The id-gated tweaks below only fire when the opponent is *detected* as
+# Dragapult, so they can never regress the mirror or any other matchup (default behaviour is
+# untouched when _VS_DRAG is False).
+try:
+    from opp_detect import detect_opp as _detect_opp
+except Exception:
+    try:
+        from agent.opp_detect import detect_opp as _detect_opp
+    except Exception:
+        _detect_opp = None
+try:
+    from opp_decks import CANDIDATES as _CANDIDATES
+except Exception:
+    try:
+        from agent.opp_decks import CANDIDATES as _CANDIDATES
+    except Exception:
+        _CANDIDATES = {}
+_DRAGAPULT_LIST = _CANDIDATES.get("dragapult")
+# Dreepy/Drakloak/Dragapult ex: this evolution line is unique to the Dragapult candidate deck,
+# so a single sighting on the opponent's side is a zero-false-positive archetype tell.
+DRAGAPULT_LINE = {119, 120, 121}   # 119 Dreepy(basic,70), 120 Drakloak(s1,90), 121 Dragapult ex(s2,320)
+
+_VS_DRAG = False  # set each frame by note_obs(): True iff opponent detected as Dragapult
+
+
+def _vs_dragapult(obs, me_i) -> bool:
+    """True iff the opponent is the Dragapult ex spread deck. Backstop is a direct sighting of the
+    (deck-unique) Dragapult evolution line on the opponent's board/discard; otherwise we defer to the
+    shared archetype detector, which sharpens as their discard accumulates."""
+    try:
+        op = obs.current.players[1 - me_i]
+        for pk in (list(op.active or []) + list(op.bench or [])):
+            if pk is None:
+                continue
+            if _id(pk) in DRAGAPULT_LINE:
+                return True
+            for c in (getattr(pk, "preEvolution", None) or []):
+                if _id(c) in DRAGAPULT_LINE:
+                    return True
+        for c in (op.discard or []):
+            if _id(c) in DRAGAPULT_LINE:
+                return True
+    except Exception:
+        pass
+    if _detect_opp is not None and _DRAGAPULT_LIST is not None:
+        try:
+            return _detect_opp(obs, None) is _DRAGAPULT_LIST
+        except Exception:
+            return False
+    return False
+
+
 # ── prize-tracker integration (the deck's edge) ────────────────────────────────────────────────
 try:
     from prize_tracker import PrizeTracker
@@ -261,20 +360,80 @@ except Exception:
 _TRACKER = None
 _LAST_PRIZE = None
 _GO_FIRST = True  # aggro deck: set up a turn earlier by going first (A/B-verified +~4pts)
+# Sticky-within-a-game flag: have we seen a LIGHTNING-type Pokémon on the opponent's side? This is
+# the only matchup where our Mega Starmie's Lightning weakness gets exploited (the Iono / Bellibolt
+# deck is the only Lightning deck in the field — Raging Bolt ex is Dragon-typed, Dragapult Dragon,
+# Abomasnow Water). Latched True once seen so a transient empty board doesn't flip it back off, and
+# reset per game. Every Lightning-gated branch below is a strict no-op while this is False, so other
+# matchups (and the mirror) are byte-identical to before.
+_OPP_LIGHTNING = False
+
+
+def _anti_lightning() -> bool:
+    """True only when the opponent has revealed a LIGHTNING-type Pokémon. Every Lightning-gated branch
+    is a strict no-op while this is False, so no other matchup (and not the mirror) can change. The
+    only Lightning deck in the bot field is Iono's Bellibolt ex (Raging Bolt ex is Dragon-typed,
+    Dragapult Dragon, Abomasnow Water), so in practice this fires exactly in the Iono matchup."""
+    return _OPP_LIGHTNING
+
+
+def _scan_opp_lightning(state, me_i) -> bool:
+    """True iff a revealed opponent Pokémon (active / bench / their pre-evolutions / discard) is a
+    LIGHTNING-type card. Reads only opponent-revealed info, exactly like agent/opp_detect.detect_opp,
+    so it can never see a card the rules engine is hiding."""
+    try:
+        op = state.players[1 - me_i]
+    except Exception:
+        return False
+    seen = []
+    try:
+        for p in (list(op.active or []) + list(op.bench or [])):
+            if p is None:
+                continue
+            seen.append(_id(p))
+            for c in (getattr(p, "preEvolution", None) or []):
+                if c is not None:
+                    seen.append(_id(c))
+        for c in (op.discard or []):
+            if c is not None:
+                seen.append(_id(c))
+    except Exception:
+        return False
+    for cid in seen:
+        cd = _meta(cid)
+        if cd is None:
+            continue
+        try:
+            if int(getattr(cd, "energyType", -1)) == _LIGHTNING:
+                return True
+        except Exception:
+            continue
+    return False
+
+
+def opp_is_lightning() -> bool:
+    return _OPP_LIGHTNING
 
 
 def note_obs(obs, obs_dict, me_i) -> None:
-    """Update the per-game prize tracker. Called every Starmie frame from best_options."""
-    global _TRACKER, _LAST_PRIZE
-    if PrizeTracker is None:
-        return
+    """Update the per-game prize tracker + the Lightning/Dragapult opponent flags. Called every frame."""
+    global _TRACKER, _LAST_PRIZE, _OPP_LIGHTNING, _VS_DRAG
+    try:
+        _VS_DRAG = _vs_dragapult(obs, me_i)
+    except Exception:
+        _VS_DRAG = False
     try:
         pc = len(obs.current.players[me_i].prize)
         # New game (prizes only decrease within a game; an increase => fresh battle).
         if _TRACKER is None or (_LAST_PRIZE is not None and pc > _LAST_PRIZE):
-            _TRACKER = PrizeTracker(STARMIE_DECK)
+            if PrizeTracker is not None:
+                _TRACKER = PrizeTracker(STARMIE_DECK)
+            _OPP_LIGHTNING = False        # fresh game -> re-detect the matchup from scratch
         _LAST_PRIZE = pc
-        _TRACKER.update(obs, obs_dict)
+        if _TRACKER is not None:
+            _TRACKER.update(obs, obs_dict)
+        if not _OPP_LIGHTNING and _scan_opp_lightning(obs.current, me_i):
+            _OPP_LIGHTNING = True         # latch: stays set for the rest of this game
     except Exception:
         pass
 
@@ -437,11 +596,32 @@ def score_main(obs, o, me_i) -> float:
         if cid == SWITCH:                  # only to promote a ready Mega over a stuck basic active
             if _id(active) in BASICS and any(_id(b) in MEGAS for b in _my_bench(state, me_i)):
                 return 1450.0
+            # vs Lightning: swap the Lightning-weak Mega Starmie active (a free 3-prize OHKO via
+            # weakness) for a benched Mega Froslass (weak Metal -> survives the ~230 hit, and is the
+            # mon we keep alive with the Wally heal-loop below). Switch is free and keeps energy.
+            if (_anti_lightning() and _id(active) == MEGA_STARMIE
+                    and any(_id(b) == MEGA_FROSLASS for b in _my_bench(state, me_i))):
+                return 1455.0
             return -1.0                    # generic Switches pointlessly (de-fuels its own attacker)
         if cid == WALLY_COMP:              # heal a Mega BUT strip its Energy -> usually a tempo trap
             if sup_done:
                 return -1.0
-            return 1100.0 if _wally_worth_it(state, me_i) else -1.0
+            # vs Dragapult: Phantom Dive hits our Active for 200 but neither Mega (310/330HP) dies to
+            # one — the KO comes from the FOLLOW-UP hit + spread. Wally fully heals (erases the 200 and
+            # any spread counters) and the energy it strips is trivially re-attached for our 1-energy
+            # {W} nuke (Resentful Refrain / Jetting Blow): they spent a whole turn for nothing while we
+            # still attack. Turns our Mega into a wall that also races. Outranks the draw engine here.
+            if _VS_DRAG and _wally_reset_vs_spread(state, me_i):
+                return 1830.0
+            if not _wally_worth_it(state, me_i):
+                return -1.0
+            # vs Lightning the Wally heal-loop is our PRIMARY plan: heal the Mega Froslass tank before
+            # the next ~230 hit kills it, then re-attach one {W} for Resentful Refrain. A Froslass at
+            # 310 -> 80 -> healed 310 loops while we hold Wally, so the bot banks no prizes off it, so
+            # the heal outranks the draw engine here (the single empirically positive anti-Iono lever).
+            if _anti_lightning() and _id(_my_active(state, me_i)) == MEGA_FROSLASS:
+                return 1830.0
+            return 1100.0
         if cid == GRAVITY_MOUNTAIN:        # our Megas are Stage-1 (immune); only chips opp Stage-2s
             if stad_done:
                 return -1.0
@@ -454,7 +634,14 @@ def score_main(obs, o, me_i) -> float:
         return 600.0
 
     if t == OptionType.EVOLVE:
-        return 1300.0  # every evolution here is a Mega ex; evolve after digging, before attaching
+        # every evolution here is a Mega ex; evolve after digging, before attaching.
+        if _anti_lightning():
+            ev = _id(_get(obs, AreaType.HAND, o.index, me_i))
+            if ev == MEGA_FROSLASS:
+                return 1360.0        # the Lightning-safe tank we want fronting + heal-looping
+            if ev == MEGA_STARMIE and o.inPlayArea == AreaType.ACTIVE:
+                return 250.0         # don't make the active a 3-prize Lightning-weak Mega
+        return 1300.0
 
     if t == OptionType.ATTACH:
         active = _my_active(state, me_i)
@@ -499,6 +686,16 @@ def score_main(obs, o, me_i) -> float:
             cd = _meta(_id(oa))
             if cd is not None and (getattr(cd, "ex", False) or getattr(cd, "megaEx", False)):
                 score += 20.0  # effect-ignoring: robust vs damage-prevention walls / big ex
+        if _opp_is_aboma(state, me_i):
+            # Vs the slow Abomasnow tank our loss mode is durdling: the generic ordering keeps
+            # playing marginal cards (a redundant search once a Mega is already set, Gravity
+            # Mountain that can't touch our Stage-1s, a minor ability) while the tank out-grinds the
+            # prize race. A bounded +250 lifts an available attack above only those low-value
+            # develop options — it stays well under the real engine (draw/evolve/attach at 1300+),
+            # so we still set up, but we stop wasting the proactive racer's tempo. (+~3pt vs the
+            # tank at N=1000, gated so no other matchup or the mirror moves; tuned: +120/+500 both
+            # test weaker, and forcing KOs over all development backfires.)
+            score += 250.0
         return score
 
     if t == OptionType.RETREAT:
@@ -506,6 +703,11 @@ def score_main(obs, o, me_i) -> float:
         active = _my_active(state, me_i)
         if _id(active) in BASICS and any(_id(b) in MEGAS for b in _my_bench(state, me_i)):
             return 120.0
+        # vs Lightning, if no Switch is in hand, retreat the Lightning-weak Mega Starmie out for a
+        # benched Mega Froslass so we don't hand over a 3-prize OHKO.
+        if (_anti_lightning() and _id(active) == MEGA_STARMIE
+                and any(_id(b) == MEGA_FROSLASS for b in _my_bench(state, me_i))):
+            return 110.0
         return -1.0
 
     if t == OptionType.END:
@@ -573,7 +775,36 @@ def _wally_worth_it(state, me_i) -> bool:
         return False
     hp = active.hp or 0
     maxhp = getattr(active, "maxHp", 0) or 0
-    if maxhp <= 0 or hp > maxhp * 0.4:
+    if maxhp <= 0:
+        return False
+    try:
+        hand = state.players[me_i].hand or []
+        have_energy = any(_id(c) in ATTACK_ENERGY for c in hand)
+    except Exception:
+        have_energy = False
+    # vs Lightning: heal the Lightning-safe Mega Froslass *before* the opponent's next ~230 hit
+    # finishes it (i.e. once it has taken a big hit), not only at <40%. Re-attaching one {W} powers
+    # Resentful Refrain, so a Froslass at 310 -> 80 -> healed 310 loops and the bot banks no prize.
+    if _anti_lightning() and _id(active) == MEGA_FROSLASS and have_energy:
+        if hp <= maxhp - 150:
+            return True
+    if hp > maxhp * 0.4:
+        return False
+    return have_energy
+
+
+def _wally_reset_vs_spread(state, me_i) -> bool:
+    """Vs Dragapult: our Active is a Mega that has soaked a Phantom Dive (>=120 damage) and we can
+    re-power its 1-energy {W} attack from hand — Wally erases the damage AND any spread counters, so
+    they wasted a 200-hit while we keep attacking. Requires a spare {W}/attack energy in hand."""
+    active = _my_active(state, me_i)
+    if _id(active) not in MEGAS:
+        return False
+    hp = active.hp or 0
+    maxhp = getattr(active, "maxHp", 0) or 0
+    if maxhp <= 0:
+        return False
+    if (maxhp - hp) < 120:        # hasn't taken a real hit yet — don't waste the heal
         return False
     try:
         hand = state.players[me_i].hand or []
@@ -660,6 +891,17 @@ def score_sub(obs, o, me_i, context) -> float:
                     score += 40.0 if o.area == AreaType.ACTIVE else 20.0
                 if len(_my_bench(state, me_i)) == 0:
                     score += 220.0  # empty bench -> a body is urgent
+            # vs a detected Lightning opponent: steer fetch / placement / evolve-target / promote.
+            # No-op (score unchanged) outside the Lightning matchup.
+            if _anti_lightning():
+                # Steer every fetch / placement / evolve-target / promote toward the Lightning-safe
+                # Froslass line and keep the Lightning-weak Starmie line off the ACTIVE (a benched
+                # Starmie is still a fine backup, so only the active is penalised).
+                to_active = (o.area == AreaType.ACTIVE)
+                if cid in FROSLASS_LINE:
+                    score += 220.0 if to_active else 90.0
+                elif cid in STARMIE_LINE and to_active:
+                    score -= 700.0
             if context in PLACEMENT_CTX:
                 score += 400.0
             return score
