@@ -403,6 +403,50 @@ def vs_lucario() -> bool:
     return _VS_LUC
 
 
+# ── opponent-archetype gating: Crustle damage-prevention wall matchup ────────────────────────────
+# Crustle (Dwebble 344 -> Crustle 345, 150HP) carries an Ability that PREVENTS all damage done to it
+# by Pokémon-ex / Mega-ex attacks, and the deck runs healing. Our list is 100% Mega-ex (Mega Starmie
+# 1031 / Mega Froslass 861), so Jetting Blow / Absolute Snow / Resentful Refrain are ALL negated — a
+# 0-prize shutout (confirmed live ladder loss, ep 81516269). Our ONLY out is Mega Starmie ex's NEBULA
+# BEAM (1488, {C}{C}{C}, 210) which IGNORES weakness/resistance AND all effects on the opponent's
+# Active, so it pierces the negation and two-shots (or one-shots a chipped) 150HP Crustle. The branches
+# below steer the entire plan toward "Mega Starmie -> {C}{C}{C} -> Nebula Beam": prioritise the Starmie
+# line for fetch / placement / evolve / energy-attach (Ignition Energy 17 = CCC in one attach on an
+# Evolution), de-prioritise the negated Jetting Blow / Froslass attacks vs the wall, and rank Nebula
+# Beam above the negated attacks once it is online. Crustle/Dwebble (344/345) appear ONLY in the
+# crustle / crustle_hardened bot decks — disjoint from our deck and every other CANDIDATE / bot deck —
+# so detection is zero-false-positive, and every branch is a strict no-op while `_VS_CRU` is False, so
+# the mirror and all other matchups are byte-identical.
+_CRUSTLE_LINE = {344, 345}   # Dwebble (basic) / Crustle (stage1, 150HP, ex-damage-prevention wall)
+_VS_CRU = False  # set each frame by note_obs(); latched True once the Crustle line is seen this game
+
+
+def _vs_crustle(obs, me_i) -> bool:
+    """True iff the opponent is piloting the Crustle damage-prevention wall. A single sighting of
+    Dwebble/Crustle (344/345) on the opponent's board / pre-evolutions / discard is a zero-false-
+    positive tell; reads only opponent-revealed info, like agent/opp_detect.detect_opp."""
+    try:
+        op = obs.current.players[1 - me_i]
+        for pk in (list(op.active or []) + list(op.bench or [])):
+            if pk is None:
+                continue
+            if _id(pk) in _CRUSTLE_LINE:
+                return True
+            for c in (getattr(pk, "preEvolution", None) or []):
+                if _id(c) in _CRUSTLE_LINE:
+                    return True
+        for c in (op.discard or []):
+            if _id(c) in _CRUSTLE_LINE:
+                return True
+    except Exception:
+        return False
+    return False
+
+
+def vs_crustle() -> bool:
+    return _VS_CRU
+
+
 # ── prize-tracker integration (the deck's edge) ────────────────────────────────────────────────
 try:
     from prize_tracker import PrizeTracker
@@ -472,7 +516,7 @@ def opp_is_lightning() -> bool:
 
 def note_obs(obs, obs_dict, me_i) -> None:
     """Update the per-game prize tracker + the Lightning/Dragapult opponent flags. Called every frame."""
-    global _TRACKER, _LAST_PRIZE, _OPP_LIGHTNING, _VS_DRAG, _VS_LUC
+    global _TRACKER, _LAST_PRIZE, _OPP_LIGHTNING, _VS_DRAG, _VS_LUC, _VS_CRU
     try:
         _VS_DRAG = _vs_dragapult(obs, me_i)
     except Exception:
@@ -485,6 +529,7 @@ def note_obs(obs, obs_dict, me_i) -> None:
                 _TRACKER = PrizeTracker(STARMIE_DECK)
             _OPP_LIGHTNING = False        # fresh game -> re-detect the matchup from scratch
             _VS_LUC = False
+            _VS_CRU = False
         _LAST_PRIZE = pc
         if _TRACKER is not None:
             _TRACKER.update(obs, obs_dict)
@@ -492,6 +537,8 @@ def note_obs(obs, obs_dict, me_i) -> None:
             _OPP_LIGHTNING = True         # latch: stays set for the rest of this game
         if not _VS_LUC and _vs_lucario(obs, me_i):
             _VS_LUC = True                # latch: stays set for the rest of this game
+        if not _VS_CRU and _vs_crustle(obs, me_i):
+            _VS_CRU = True                # latch: stays set for the rest of this game
     except Exception:
         pass
 
@@ -705,21 +752,36 @@ def score_main(obs, o, me_i) -> float:
                 return 1360.0        # the Lightning-safe tank we want fronting + heal-looping
             if ev == MEGA_STARMIE and o.inPlayArea == AreaType.ACTIVE:
                 return 250.0         # don't make the active a 3-prize Lightning-weak Mega
+        if _VS_CRU:
+            ev = _id(_get(obs, AreaType.HAND, o.index, me_i))
+            if ev == MEGA_STARMIE:
+                return 1380.0        # the only attacker (Nebula Beam) that pierces the ex-damage wall
         return 1300.0
 
     if t == OptionType.ATTACH:
         active = _my_active(state, me_i)
         if o.inPlayArea == AreaType.ACTIVE:
             if _id(active) in MEGAS:
+                # vs Crustle: rush Mega Starmie to {C}{C}{C} so Nebula Beam (the only attack that
+                # pierces the ex-damage-prevention wall) comes online a turn earlier.
+                if _VS_CRU and _id(active) == MEGA_STARMIE and _energy_count(active) < 3:
+                    return 1320.0
                 return 1250.0 if _energy_count(active) < 3 else 1000.0
             if _id(active) in BASICS:
+                # Energy carries through evolution: fuel a Staryu that will become the Nebula attacker.
+                if _VS_CRU and _id(active) == STARYU and _energy_count(active) < 3:
+                    return 1230.0
                 return 1200.0  # fuel the soon-to-be Mega (energy carries through evolution)
             return 1050.0
         if o.inPlayArea == AreaType.BENCH:
             tgt = _get(obs, o.inPlayArea, o.inPlayIndex, me_i)
             if _id(tgt) in MEGAS:
+                if _VS_CRU and _id(tgt) == MEGA_STARMIE and _energy_count(tgt) < 3:
+                    return 1180.0
                 return 1100.0 if _energy_count(tgt) < 3 else 1000.0
             if _id(tgt) in BASICS:
+                if _VS_CRU and _id(tgt) == STARYU and _energy_count(tgt) < 3:
+                    return 1080.0
                 return 1050.0
             return 1000.0
         return 1000.0
@@ -750,6 +812,14 @@ def score_main(obs, o, me_i) -> float:
             cd = _meta(_id(oa))
             if cd is not None and (getattr(cd, "ex", False) or getattr(cd, "megaEx", False)):
                 score += 20.0  # effect-ignoring: robust vs damage-prevention walls / big ex
+        if _VS_CRU:
+            # Crustle negates all damage from our ex/Mega-ex attacks; only Nebula Beam (effect-ignoring)
+            # actually lands. Rank it well above the negated Jetting Blow / Froslass attacks so we punch
+            # through the wall instead of whiffing. (Strict no-op outside the Crustle matchup.)
+            if o.attackId == NEBULA_BEAM:
+                score += 300.0
+            elif o.attackId in (JETTING_BLOW, ABSOLUTE_SNOW, RESENTFUL_REFRAIN):
+                score -= 60.0  # negated vs the wall (kept >= END so the Jetting 50 bench-snipe still fires)
         if _opp_is_aboma(state, me_i):
             # Vs the slow Abomasnow tank our loss mode is durdling: the generic ordering keeps
             # playing marginal cards (a redundant search once a Mega is already set, Gravity
@@ -989,6 +1059,16 @@ def score_sub(obs, o, me_i, context) -> float:
                     score += 220.0 if to_active else 90.0
                 elif cid in STARMIE_LINE and to_active:
                     score -= 700.0
+            # vs Crustle: the inverse of the default Froslass bias — only Mega Starmie's Nebula Beam
+            # pierces the ex-damage wall, so steer fetch / placement / evolve-target / promote toward
+            # the Starmie line and keep the (fully-negated) Froslass attacker off the ACTIVE. No-op
+            # outside the Crustle matchup. (Lightning + Crustle are mutually exclusive matchups.)
+            if _VS_CRU:
+                to_active = (o.area == AreaType.ACTIVE)
+                if cid in STARMIE_LINE:
+                    score += 220.0 if to_active else 90.0
+                elif cid in FROSLASS_LINE and to_active:
+                    score -= 200.0
             if context in PLACEMENT_CTX:
                 score += 400.0
             return score
@@ -1000,6 +1080,10 @@ def score_sub(obs, o, me_i, context) -> float:
             need_energy = active is not None and _id(active) in (MEGAS | BASICS) and _energy_count(active) < 3
             if cid in ATTACK_ENERGY:
                 score += 120.0 if need_energy else 40.0
+                # vs Crustle, Ignition Energy provides {C}{C}{C} on an Evolution in one attach -> it
+                # brings Mega Starmie's wall-piercing Nebula Beam online a full turn early.
+                if _VS_CRU and cid == IGNITION_ENERGY:
+                    score += 150.0
             elif cid in (SALVATORE, MEGA_SIGNAL, HILDA):
                 score += 90.0 if not _have_mega_to_play(state, me_i) else 30.0
             elif cid == BOSS_ORDERS:
