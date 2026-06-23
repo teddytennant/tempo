@@ -1,0 +1,8 @@
+Frozen snapshot of agent/*.py for tools/selfplay_ab.py A/B baseline.
+FROZEN_AT commit: 993aefc923dbd3da8791d50feae1186a37ae9876
+starmie: opponent-gated Crustle-wall matchup (commit to Nebula Beam through ex-immunity)
+Date: 2026-06-23T14:58:03-04:00
+
+This is the immutable BASELINE pilot. Do not edit. To compare a change, point
+selfplay_ab.py --candidate at the worktree/repo containing the change and keep
+--baseline pointed here.

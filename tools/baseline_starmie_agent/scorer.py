@@ -46,13 +46,6 @@ except Exception:
     except Exception:
         _starmie = None
 try:
-    import cinderace_rules as _cinderace      # keidroid #1 Cinderace + Mega Starmie ex / Crushing Hammer
-except Exception:
-    try:
-        from agent import cinderace_rules as _cinderace
-    except Exception:
-        _cinderace = None
-try:
     import dunsparce_rules as _dunsparce       # Alakazam Powerful Hand / Dudunsparce draw-combo specialist
 except Exception:
     try:
@@ -393,24 +386,11 @@ def best_options(obs_dict) -> list[int]:
             except Exception:
                 lucario = False
 
-        # keidroid #1 Cinderace + Mega Starmie ex / Crushing Hammer specialist: checked BEFORE the
-        # Starmie/Froslass specialist because this list SHARES the Staryu/Mega Starmie line, so its
-        # gate is the disjoint subset (Cinderace/Crushing Hammer/Harlequin/Ultra Ball/Hero's Cape) and
-        # the starmie gate below is suppressed when it fires — the two never both pilot the same deck.
-        cinderace = False
-        if not crustle and not lucario and _cinderace is not None:
-            try:
-                cinderace = _cinderace.is_cinderace_deck(state, me_i)
-                if cinderace:
-                    _cinderace.note_obs(obs, obs_dict, me_i)
-            except Exception:
-                cinderace = False
-
         # Mega Starmie / Mega Froslass ex prize-race specialist: only when we pilot the Starmie line
         # (signatures disjoint from Crustle/Lucario, so the id-gated paths never overlap). It keeps a
         # per-game prize tracker so its deck-search decisions never whiff on a prized card.
         starmie = False
-        if not crustle and not lucario and not cinderace and _starmie is not None:
+        if not crustle and not lucario and _starmie is not None:
             try:
                 starmie = _starmie.is_starmie_deck(state, me_i)
                 if starmie:
@@ -424,7 +404,7 @@ def best_options(obs_dict) -> list[int]:
         # dunsparce list, so it is checked FIRST (its gate also requires a list-unique card) and the
         # dunsparce gate below is suppressed when it fires — the two never both pilot the same deck.
         fezandipiti = False
-        if not crustle and not lucario and not cinderace and not starmie and _fezandipiti is not None:
+        if not crustle and not lucario and not starmie and _fezandipiti is not None:
             try:
                 fezandipiti = _fezandipiti.is_fezandipiti_deck(state, me_i)
             except Exception:
@@ -434,8 +414,7 @@ def best_options(obs_dict) -> list[int]:
         # (signature disjoint from Crustle/Lucario/Starmie, so the id-gated paths never overlap). It
         # is the one deck that breaks the Crustle wall (Powerful Hand is non-ex damage counters).
         dunsparce = False
-        if (not crustle and not lucario and not cinderace and not starmie and not fezandipiti
-                and _dunsparce is not None):
+        if not crustle and not lucario and not starmie and not fezandipiti and _dunsparce is not None:
             try:
                 dunsparce = _dunsparce.is_dunsparce_deck(state, me_i)
             except Exception:
@@ -446,8 +425,8 @@ def best_options(obs_dict) -> list[int]:
         # overlap). This is the empirically strongest archetype on the board (it beats all four of our
         # other decks as an opponent), piloted here on our own side.
         iono = False
-        if (not crustle and not lucario and not cinderace and not starmie and not dunsparce
-                and not fezandipiti and _iono is not None):
+        if (not crustle and not lucario and not starmie and not dunsparce and not fezandipiti
+                and _iono is not None):
             try:
                 iono = _iono.is_iono_deck(state, me_i)
             except Exception:
@@ -457,8 +436,8 @@ def best_options(obs_dict) -> list[int]:
         # line (signature 304/311/878/879 disjoint from every other specialist, so the id-gated paths
         # never overlap). This is the #2 frontier team's deck ("The Debauchery Tea Party", ~1358 Elo).
         hops_snorlax = False
-        if (not crustle and not lucario and not cinderace and not starmie and not dunsparce
-                and not fezandipiti and not iono and _hops_snorlax is not None):
+        if (not crustle and not lucario and not starmie and not dunsparce and not fezandipiti
+                and not iono and _hops_snorlax is not None):
             try:
                 hops_snorlax = _hops_snorlax.is_hops_snorlax_deck(state, me_i)
             except Exception:
@@ -466,14 +445,12 @@ def best_options(obs_dict) -> list[int]:
 
         # Specialist guard FIRST so it short-circuits before touching SelectContext.MAIN (which the
         # mock test engine does not define): when no specialist is active this whole gate is skipped.
-        if (crustle or lucario or cinderace or starmie or dunsparce or iono or fezandipiti or hops_snorlax) and _lethal_move is not None and ctx == SelectContext.MAIN:
+        if (crustle or lucario or starmie or dunsparce or iono or fezandipiti or hops_snorlax) and _lethal_move is not None and ctx == SelectContext.MAIN:
             try:
                 if crustle:
                     deck = _crustle.CRUSTLE_DECK
                 elif lucario:
                     deck = _lucario.LUCARIO_DECK
-                elif cinderace:
-                    deck = _cinderace.CINDERACE_DECK
                 elif starmie:
                     deck = _starmie.STARMIE_DECK
                 elif dunsparce:
@@ -503,11 +480,6 @@ def best_options(obs_dict) -> list[int]:
                         scores.append(_lucario.score_main(obs, o, me_i))
                     else:
                         scores.append(_lucario.score_sub(obs, o, me_i, ctx))
-                elif cinderace:
-                    if ctx == SelectContext.MAIN:
-                        scores.append(_cinderace.score_main(obs, o, me_i))
-                    else:
-                        scores.append(_cinderace.score_sub(obs, o, me_i, ctx))
                 elif starmie:
                     if ctx == SelectContext.MAIN:
                         scores.append(_starmie.score_main(obs, o, me_i))
