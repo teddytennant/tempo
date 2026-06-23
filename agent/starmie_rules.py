@@ -357,64 +357,6 @@ def _eff_damage(active, attack_id, opp_active, opp) -> int:
     return (atk.damage or 0) if atk is not None else 0
 
 
-# A "productive" swing: a real chip/KO, not a 10-20 dmg basic poke (Chilly / Water Gun). Below this
-# we keep developing; at/above it, racing for prizes beats playing another draw/search we don't need.
-PRODUCTIVE_DMG = 60
-
-
-def _attack_reach(obs, state, me_i):
-    """Scan the CURRENT options for the best *productive* swing we can make right now. Only legal/
-    affordable attacks are ever offered, so this is exactly 'what the fueled board can hit for this
-    turn'. Returns (best_dmg, best_kos)."""
-    best_dmg = 0
-    best_kos = False
-    oa = _opp_active(state, me_i)
-    active = _my_active(state, me_i)
-    opp = state.players[1 - me_i]
-    try:
-        opts = obs.select.option or []
-    except Exception:
-        return 0, False
-    for opt in opts:
-        if getattr(opt, "type", None) != OptionType.ATTACK:
-            continue
-        d = _eff_damage(active, getattr(opt, "attackId", None), oa, opp)
-        if d > best_dmg:
-            best_dmg = d
-        if oa is not None and d > 0 and d >= (oa.hp or 0):
-            best_kos = True
-    return best_dmg, best_kos
-
-
-def _can_attack_now(obs, state, me_i) -> bool:
-    best_dmg, _ = _attack_reach(obs, state, me_i)
-    return best_dmg >= PRODUCTIVE_DMG
-
-
-def _pending_free_setup(obs, state, me_i) -> bool:
-    """True iff a strictly-good, NON-turn-ending setup is still available that should precede the
-    swing: evolving a Pokémon, or attaching energy to an UNDER-fueled attacker. We do these first,
-    THEN attack (attacking ends the turn). When nothing like this is pending, deferring the swing
-    only burns the deck — so the productive attack is ranked above the draw/search engine instead."""
-    try:
-        opts = obs.select.option or []
-    except Exception:
-        return False
-    # If the active can ALREADY swing for value, topping off its energy is not mandatory pre-attack
-    # setup -- the frontier swings now rather than over-fuelling (e.g. it Jetting Blows for 120 on one
-    # energy instead of waiting to reach Nebula Beam). Only force a fuel when it cannot yet attack.
-    can_swing = _can_attack_now(obs, state, me_i)
-    for opt in opts:
-        t = getattr(opt, "type", None)
-        if t == OptionType.EVOLVE:
-            return True
-        if t == OptionType.ATTACH and getattr(opt, "inPlayArea", None) == AreaType.ACTIVE and not can_swing:
-            active = _my_active(state, me_i)
-            if _id(active) in (MEGAS | BASICS) and _energy_count(active) < 3:
-                return True
-    return False
-
-
 # MAIN priority bands. The proven ordering is DIG/DRAW BEFORE YOU COMMIT: play search/draw
 # (Lillie / Salvatore / Hilda / Mega Signal / Buddy Poffin / Energy Search / Pokégear) to see more
 # cards, THEN evolve, THEN attach energy, THEN attack (attacking ends the turn). Boss / Black Belt
@@ -434,9 +376,6 @@ def score_main(obs, o, me_i) -> float:
         sup_done = bool(getattr(state, "supporterPlayed", False))
         stad_done = bool(getattr(state, "stadiumPlayed", False))
         need_fuel = active is not None and _id(active) in (MEGAS | BASICS) and _energy_count(active) < 3
-        # Prize-race / anti-deck-out: if the fueled board can already take a productive swing, an
-        # adequate-hand draw/search is pure card-burn (deck-out is a real loss in 30+ turn games).
-        attack_ready = _can_attack_now(obs, state, me_i)
 
         # ---- pre-attack supporters that do real work outrank the draw engine (one supporter/turn) --
         if cid == BOSS_ORDERS:             # gust + KO a benched target for the prize race
@@ -464,35 +403,27 @@ def score_main(obs, o, me_i) -> float:
                 return -1.0
             hand_n = len(state.players[me_i].hand or [])
             if hand_n <= 4:
-                return 1800.0              # genuinely thin -> refuel BEFORE swinging
-            if attack_ready:
-                return 200.0               # adequate hand + can attack -> don't redraw into deck-out
+                return 1800.0
             if hand_n <= 6:
                 return 1500.0
             return -1.0                    # loaded hand -> shuffling it away is a loss
-        if cid == MEGA_SIGNAL:             # item: tutor a Mega ex to hand (free; finds the attacker)
+        if cid == MEGA_SIGNAL:             # item: tutor a Mega ex to hand
             if not _mega_available_in_deck(state, me_i):
                 return -1.0                # all Megas prized/visible -> whiff
-            if not _have_mega_to_play(state, me_i):
-                return 1750.0              # no attacker yet -> top priority
-            return 1620.0                  # fetch the NEXT attacker (frontier digs it pre-swing)
-        if cid == BUDDY_POFFIN:            # both basics are 70HP -> the whole line; bodies, not pieces
+            return 1750.0 if not _have_mega_to_play(state, me_i) else 350.0
+        if cid == BUDDY_POFFIN:            # both basics are 70HP -> the whole line; vital when thin
             if not _basic_available_in_deck(state, me_i):
                 return -1.0
-            if bench_n == 0:
-                return 1700.0              # no bench at all -> a body is urgent
-            if attack_ready:
-                return 200.0               # board can already swing -> stop thinning the deck
-            if bench_n == 1:
-                return 1350.0              # one body -> still want a backup, but below fuel/tutors
+            if bench_n <= 1:
+                return 1780.0
             if bench_n <= 3:
-                return 1250.0              # raw bodies rank below targeted search + fuelling
+                return 1650.0
             return 250.0
         if cid == ENERGY_SEARCH:           # item: tutor a Basic Energy
             if _deck_available(state, me_i, BASIC_WATER) <= 0:
                 return -1.0
             return 1700.0 if need_fuel else 300.0
-        if cid == POKEGEAR:                # item: dig for a Supporter (free, doesn't end turn)
+        if cid == POKEGEAR:                # item: dig for a Supporter
             return 1600.0 if not sup_done else 300.0
         if cid == NIGHT_STRETCHER:         # item: recover a key piece from discard
             try:
@@ -523,32 +454,22 @@ def score_main(obs, o, me_i) -> float:
         return 600.0
 
     if t == OptionType.EVOLVE:
-        return 1600.0  # every evolution here is a Mega ex; getting the attacker online ranks above
-        #                manually fuelling the bench (and above raw bodies), but below the tutors
+        return 1300.0  # every evolution here is a Mega ex; evolve after digging, before attaching
 
     if t == OptionType.ATTACH:
-        # If a productive swing is on the table THIS turn, don't spend the turn over-attaching: keep
-        # attach low so the attack (1300+) wins. Otherwise, manually building energy on an attacker
-        # is the turn's best development -> rank it above raw bodies (Poffin) and draw, as the
-        # frontier does (it pre-fuels a benched Mega/Staryu rather than thinning its deck).
         active = _my_active(state, me_i)
-        attack_ready = _can_attack_now(obs, state, me_i)
         if o.inPlayArea == AreaType.ACTIVE:
             if _id(active) in MEGAS:
-                if _energy_count(active) >= 3:
-                    return 1000.0          # already fueled -> attacking/other plays come first
-                return 1100.0 if attack_ready else 1480.0  # fuel the live attacker first
+                return 1250.0 if _energy_count(active) < 3 else 1000.0
             if _id(active) in BASICS:
-                return 1100.0 if attack_ready else 1460.0  # carries through the evolution
+                return 1200.0  # fuel the soon-to-be Mega (energy carries through evolution)
             return 1050.0
         if o.inPlayArea == AreaType.BENCH:
             tgt = _get(obs, o.inPlayArea, o.inPlayIndex, me_i)
             if _id(tgt) in MEGAS:
-                if _energy_count(tgt) >= 3:
-                    return 1000.0
-                return 1100.0 if attack_ready else 1420.0   # build the NEXT attacker's energy
+                return 1100.0 if _energy_count(tgt) < 3 else 1000.0
             if _id(tgt) in BASICS:
-                return 1050.0 if attack_ready else 1400.0
+                return 1050.0
             return 1000.0
         return 1000.0
 
@@ -556,32 +477,22 @@ def score_main(obs, o, me_i) -> float:
         return 400.0
 
     if t == OptionType.ATTACK:
-        # Attacking ENDS the turn. We still do FREE same-turn setup first (evolve, fuel an under-
-        # powered attacker) -> while that is pending, keep attack low so it lands last. But once no
-        # such setup remains, a productive swing is the play: the #1 pilots take prizes every turn,
-        # and deferring to play another draw/search just burns the deck (deck-out is a real loss in
-        # long games). So rank a productive attack ABOVE the draw/search engine, scaled by what it
-        # secures (KO > big chip > small chip), yet BELOW genuinely-needed supporters (Boss for a
-        # better KO 1950, thin-hand Lillie 1800, evolve-search 1850) so we still set up, then swing.
+        # Attacking ENDS the turn, so the proven ordering is: do all free development first, attack
+        # LAST. Keep attack below the develop/draw engine — EXCEPT a game-winning swing (KOs their
+        # last prize), which there is never a reason to defer: take it immediately.
         active = _my_active(state, me_i)
         oa = _opp_active(state, me_i)
+        score = 100.0
         dmg = _eff_damage(active, o.attackId, oa, state.players[1 - me_i])
-        is_ko = oa is not None and dmg > 0 and dmg >= (oa.hp or 0)
-        if is_ko:
+        score += min(max(dmg, 0), 300) * 0.2
+        if oa is not None and dmg > 0 and dmg >= (oa.hp or 0):
+            score += 160.0  # KO
             try:                                   # game-winning KO takes their last prize(s)
                 opp = state.players[1 - me_i]
                 if len(opp.prize or []) <= _prize_count_for(oa):
                     return 50000.0
             except Exception:
                 pass
-        productive = dmg >= PRODUCTIVE_DMG and not _pending_free_setup(obs, state, me_i)
-        # A productive swing ranks ABOVE redundant draw/search + bench-attach (1000-1100) but BELOW
-        # a genuinely-useful free play (Pokégear / thin-hand Lillie / Poffin-for-a-body / evolve-
-        # search ~1600-1950), which the frontier does first (it doesn't end the turn) and then swings.
-        score = 1300.0 if productive else 100.0
-        score += min(max(dmg, 0), 300) * 0.2      # value by damage: bigger chip ranks higher
-        if is_ko:
-            score += 150.0 if productive else 160.0  # securing a prize beats more development
         if o.attackId == JETTING_BLOW:
             score += 12.0    # the 50 bench snipe is real extra value (tiebreak)
         if o.attackId == NEBULA_BEAM and oa is not None:
