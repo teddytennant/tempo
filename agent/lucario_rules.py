@@ -536,11 +536,15 @@ def score_main(obs, o, me_i) -> float:
             return -50.0
 
         score = 100.0 + min(max(dmg, 0), 300) * 0.3
+        # Aura Jab (982) is the DEFAULT repeatable attack: 130 dmg, re-attaches up to 3 F energy from
+        # discard, and (unlike Mega Brave 983, which locks this Pokémon out next turn) keeps swinging.
+        # Bias toward it on EVERY swing; the +200 KO term below still lets Mega Brave win the turns
+        # where only its 270 dmg secures a KO. (Previously this +60 was trapped inside the KO branch,
+        # so non-lethal turns defaulted to the lockout attack and skipped the energy re-attach.)
+        if o.attackId == AURA_JAB:
+            score += 60.0
         if oa is not None and dmg > 0 and dmg >= (oa.hp or 0):
             score += 200.0  # KO
-            # Prefer the repeatable Aura Jab when it already KOs (Mega Brave locks us out next turn).
-            if o.attackId == AURA_JAB:
-                score += 60.0
             # Game-winning swing: this KO takes their last prize(s).
             try:
                 opp = state.players[1 - me_i]

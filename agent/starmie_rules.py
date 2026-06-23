@@ -477,6 +477,9 @@ def score_main(obs, o, me_i) -> float:
         return 400.0
 
     if t == OptionType.ATTACK:
+        # Attacking ENDS the turn, so the proven ordering is: do all free development first, attack
+        # LAST. Keep attack below the develop/draw engine — EXCEPT a game-winning swing (KOs their
+        # last prize), which there is never a reason to defer: take it immediately.
         active = _my_active(state, me_i)
         oa = _opp_active(state, me_i)
         score = 100.0
@@ -484,6 +487,12 @@ def score_main(obs, o, me_i) -> float:
         score += min(max(dmg, 0), 300) * 0.2
         if oa is not None and dmg > 0 and dmg >= (oa.hp or 0):
             score += 160.0  # KO
+            try:                                   # game-winning KO takes their last prize(s)
+                opp = state.players[1 - me_i]
+                if len(opp.prize or []) <= _prize_count_for(oa):
+                    return 50000.0
+            except Exception:
+                pass
         if o.attackId == JETTING_BLOW:
             score += 12.0    # the 50 bench snipe is real extra value (tiebreak)
         if o.attackId == NEBULA_BEAM and oa is not None:
