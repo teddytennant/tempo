@@ -348,6 +348,61 @@ def _vs_dragapult(obs, me_i) -> bool:
     return False
 
 
+# ── opponent-archetype gating: Mega Lucario ex Fighting beatdown matchup ─────────────────────────
+# We lose the baseline950 (romanrozen Mega Lucario ex) matchup ~35-38%. It races with a single big
+# Fighting attacker (Riolu -> Mega Lucario ex; Aura Jab 130 repeatable + re-attaches energy, Mega
+# Brave 270 with a one-turn self-lockout; Hariyama 210 backup; Solrock/Lunatone support). Neither of
+# our 3-prize Megas (Starmie 330 / Froslass 310) is weak to Fighting, so it is a prize race.
+#
+# The decisive lever (see _wally_reset_vs_lucario): because Aura Jab is only 130/turn and Mega Brave
+# self-locks, a full-HP Mega can NEVER be KO'd in a single turn. So Wally's Comprehensive Care — full
+# heal at the cost of returning all energy (normally a tempo trap) — turns our active into a wall:
+# heal once it has soaked a Fighting hit, re-attach one {W}, and keep firing Jetting Blow (120 + 50
+# snipe). Holding Wally + an energy, our Mega loops and the bot banks no prizes off it. Empirically
+# +~11pt vs baseline950 at N>=1000. (Steering the attacker line / an attack-tempo bump / snipe- and
+# Boss-deny-setup levers were all tried and discarded — each tested neutral-to-negative.)
+#
+# Every branch below is a strict no-op while `_VS_LUC` is False, so the mirror and all other matchups
+# are byte-identical. The signature ids are unique to the Lucario shell (disjoint from our deck and
+# from every other CANDIDATE / bot deck), so detection is zero-false-positive.
+_LUCARIO_LINE = {673, 674, 675, 676, 677, 678}  # Makuhita/Hariyama/Lunatone/Solrock/Riolu/Mega Lucario ex
+_VS_LUC = False  # set each frame by note_obs(); latched True once the Lucario shell is seen this game
+
+# Wally heal-loop threshold: heal the active Mega once it has soaked >= this much damage. Grid-searched
+# vs baseline950 at N>=1000 (60/90/110/130/150/200/260 all tested; 60-130 ~+11pt over inert, flat in
+# that band, decaying above 150). 130 = "soaked exactly one Aura Jab". Strict no-op while _VS_LUC False.
+# Line-steer / attack-tempo / snipe / Boss-deny levers were all tried and REMOVED: each tested neutral-
+# to-negative at N>=600, so the only shipped lever is this heal-loop (mirrors the Lightning/Dragapult
+# Wally gates, which exploit the same "neither Mega dies in one hit" fact).
+_LUC_WALLY_DMG = 130.0
+
+
+def _vs_lucario(obs, me_i) -> bool:
+    """True iff the opponent is piloting the Mega Lucario ex Fighting beatdown. A single sighting of
+    any card in the (deck-unique) Lucario shell on the opponent's board / pre-evolutions / discard is
+    a zero-false-positive tell; reads only opponent-revealed info, like agent/opp_detect.detect_opp."""
+    try:
+        op = obs.current.players[1 - me_i]
+        for pk in (list(op.active or []) + list(op.bench or [])):
+            if pk is None:
+                continue
+            if _id(pk) in _LUCARIO_LINE:
+                return True
+            for c in (getattr(pk, "preEvolution", None) or []):
+                if _id(c) in _LUCARIO_LINE:
+                    return True
+        for c in (op.discard or []):
+            if _id(c) in _LUCARIO_LINE:
+                return True
+    except Exception:
+        return False
+    return False
+
+
+def vs_lucario() -> bool:
+    return _VS_LUC
+
+
 # ── prize-tracker integration (the deck's edge) ────────────────────────────────────────────────
 try:
     from prize_tracker import PrizeTracker
@@ -417,7 +472,7 @@ def opp_is_lightning() -> bool:
 
 def note_obs(obs, obs_dict, me_i) -> None:
     """Update the per-game prize tracker + the Lightning/Dragapult opponent flags. Called every frame."""
-    global _TRACKER, _LAST_PRIZE, _OPP_LIGHTNING, _VS_DRAG
+    global _TRACKER, _LAST_PRIZE, _OPP_LIGHTNING, _VS_DRAG, _VS_LUC
     try:
         _VS_DRAG = _vs_dragapult(obs, me_i)
     except Exception:
@@ -429,11 +484,14 @@ def note_obs(obs, obs_dict, me_i) -> None:
             if PrizeTracker is not None:
                 _TRACKER = PrizeTracker(STARMIE_DECK)
             _OPP_LIGHTNING = False        # fresh game -> re-detect the matchup from scratch
+            _VS_LUC = False
         _LAST_PRIZE = pc
         if _TRACKER is not None:
             _TRACKER.update(obs, obs_dict)
         if not _OPP_LIGHTNING and _scan_opp_lightning(obs.current, me_i):
             _OPP_LIGHTNING = True         # latch: stays set for the rest of this game
+        if not _VS_LUC and _vs_lucario(obs, me_i):
+            _VS_LUC = True                # latch: stays set for the rest of this game
     except Exception:
         pass
 
@@ -613,6 +671,12 @@ def score_main(obs, o, me_i) -> float:
             # still attack. Turns our Mega into a wall that also races. Outranks the draw engine here.
             if _VS_DRAG and _wally_reset_vs_spread(state, me_i):
                 return 1830.0
+            # vs Lucario: the heal-loop wall. Aura Jab only does 130/turn and Mega Brave (270) self-
+            # locks, so a full-HP Mega never dies in one turn; Wally fully heals our damaged active and
+            # one re-attached {W} re-arms Jetting Blow (120 + 50 snipe). Holding Wally + an energy, our
+            # 330HP Starmie loops (330 -> healed) while still racing, so the bot banks no prizes off it.
+            if _VS_LUC and _wally_reset_vs_lucario(state, me_i):
+                return 1830.0
             if not _wally_worth_it(state, me_i):
                 return -1.0
             # vs Lightning the Wally heal-loop is our PRIMARY plan: heal the Mega Froslass tank before
@@ -791,6 +855,29 @@ def _wally_worth_it(state, me_i) -> bool:
     if hp > maxhp * 0.4:
         return False
     return have_energy
+
+
+def _wally_reset_vs_lucario(state, me_i) -> bool:
+    """Vs Lucario: our active is a Mega that has soaked a real Fighting hit (>= _LUC_WALLY_DMG) and we
+    can re-power its 1-energy {W} attack from hand. Wally fully heals it; since Aura Jab is only 130 a
+    turn (and Mega Brave self-locks), the healed Mega can never be KO'd in the gap — it walls + races.
+    Requires a spare {W}/attack energy in hand. Strict no-op outside the Lucario matchup."""
+    if _LUC_WALLY_DMG <= 0:
+        return False
+    active = _my_active(state, me_i)
+    if _id(active) not in MEGAS:
+        return False
+    hp = active.hp or 0
+    maxhp = getattr(active, "maxHp", 0) or 0
+    if maxhp <= 0:
+        return False
+    if (maxhp - hp) < _LUC_WALLY_DMG:    # hasn't taken a real hit yet — don't waste the heal
+        return False
+    try:
+        hand = state.players[me_i].hand or []
+        return any(_id(c) in ATTACK_ENERGY for c in hand)
+    except Exception:
+        return False
 
 
 def _wally_reset_vs_spread(state, me_i) -> bool:
