@@ -40,3 +40,6 @@ data/selfplay/
 
 engine_rs/target/
 *.whl
+data/episodes_daily/
+data/bc_top/
+data/leaderboard_*.csv

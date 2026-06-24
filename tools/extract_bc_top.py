@@ -50,7 +50,9 @@ def load_top_teams(leaderboard, min_score):
 
 def winner_of(rep):
     r = rep.get("rewards") or [0, 0]
-    return 0 if r[0] > r[1] else 1 if r[1] > r[0] else None
+    a = r[0] if len(r) > 0 and r[0] is not None else 0
+    b = r[1] if len(r) > 1 and r[1] is not None else 0
+    return 0 if a > b else 1 if b > a else None
 
 
 def valid(act, sel):
