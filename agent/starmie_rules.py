@@ -766,6 +766,13 @@ def score_main(obs, o, me_i) -> float:
                 # pierces the ex-damage-prevention wall) comes online a turn earlier.
                 if _VS_CRU and _id(active) == MEGA_STARMIE and _energy_count(active) < 3:
                     return 1320.0
+                # vs Lightning: prefer landing the single Legacy Energy on the active Froslass tank.
+                # Legacy makes its holder's KO yield 1 fewer prize (once/game), shaving the inevitable
+                # Froslass death from 3 prizes to 2 in a race we lose by ~2. It stays in ATTACK_ENERGY
+                # so it still fuels Resentful Refrain ({W}) — pure upside. Outranks a Basic Water attach.
+                if (_anti_lightning() and _id(active) == MEGA_FROSLASS
+                        and _id(_get(obs, AreaType.HAND, o.index, me_i)) == LEGACY_ENERGY):
+                    return 1300.0
                 return 1250.0 if _energy_count(active) < 3 else 1000.0
             if _id(active) in BASICS:
                 # Energy carries through evolution: fuel a Staryu that will become the Nebula attacker.
@@ -1084,6 +1091,12 @@ def score_sub(obs, o, me_i, context) -> float:
                 # brings Mega Starmie's wall-piercing Nebula Beam online a full turn early.
                 if _VS_CRU and cid == IGNITION_ENERGY:
                     score += 150.0
+                # vs Lightning: prefer fetching the single Legacy Energy onto the active Froslass tank.
+                # Legacy makes its holder's KO yield 1 fewer prize (once/game) — shaves the inevitable
+                # Froslass death from 3 prizes to 2. Still in ATTACK_ENERGY so it fuels Resentful Refrain.
+                if (_anti_lightning() and cid == LEGACY_ENERGY
+                        and _id(_my_active(state, me_i)) == MEGA_FROSLASS):
+                    score += 200.0
             elif cid in (SALVATORE, MEGA_SIGNAL, HILDA):
                 score += 90.0 if not _have_mega_to_play(state, me_i) else 30.0
             elif cid == BOSS_ORDERS:
