@@ -484,7 +484,15 @@ def best_options(obs_dict) -> list[int]:
                     deck = _iono.IONO_DECK
                 else:
                     deck = _hops_snorlax.HOPS_SNORLAX_DECK
-                lm = _lethal_move(obs_dict, deck)
+                # Feed the verifier our known-prized cards so it never plans a lethal that relies
+                # on a card sitting in the prize zone (the top-3 team's stated core technique).
+                prized_counter = None
+                if starmie:
+                    try:
+                        prized_counter = _starmie._prized()
+                    except Exception:
+                        prized_counter = None
+                lm = _lethal_move(obs_dict, deck, prized_counter)
                 if isinstance(lm, list) and lm:
                     return lm
             except Exception:

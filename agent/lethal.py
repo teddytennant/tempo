@@ -30,6 +30,18 @@ try:
 except Exception:  # mock engine / missing native symbols
     _HAVE_SEARCH = False
 
+# Belief-corrected determinization: places known-prized cards in the prize slot (not the draw
+# pile) and never lets the search "draw" a card that is really prized — the top-3 team's stated
+# core technique ("a search that uses a prized card finds an impossible line = NOMATCH"). Optional;
+# on any import/runtime failure we fall back to the old (overlapping) pool slice below.
+try:
+    from belief import corrected_deck as _corrected_deck
+except Exception:
+    try:
+        from agent.belief import corrected_deck as _corrected_deck
+    except Exception:
+        _corrected_deck = None
+
 # Plausibility gate: only bother verifying lethal when the opponent has at most this many prizes
 # left. (A multi-prize sweep in one turn is essentially impossible with these decks.)
 PRIZE_GATE = 2
@@ -175,9 +187,13 @@ def _dfs(search_id, obs, me_i: int, depth: int, budget: _Budget) -> bool:
     return False
 
 
-def lethal_move(obs_dict, decklist) -> list[int] | None:
+def lethal_move(obs_dict, decklist, prized_counter=None) -> list[int] | None:
     """If a verified game-winning sequence exists from the current MAIN decision, return the
-    selection that plays its first action; otherwise None. Never raises."""
+    selection that plays its first action; otherwise None. Never raises.
+
+    `prized_counter` (a collections.Counter of card_id->count from PrizeTracker.prized_cards(), or
+    None) lets the determinization seat our known-prized cards in the prize zone instead of the
+    draw pile, so a verified lethal can never rely on a card that is actually prized."""
     if not _HAVE_SEARCH:
         return None
     try:
@@ -203,9 +219,29 @@ def lethal_move(obs_dict, decklist) -> list[int] | None:
 
         me = state.players[me_i]
         opp = state.players[1 - me_i]
-        pool = (list(decklist) * 2) if decklist else [1]
-        your_deck = pool[: max(me.deckCount, 1)]
-        your_prize = pool[: max(len(me.prize), 1)]
+        prize_n = max(len(me.prize), 1)
+        deck_n = max(me.deckCount, 1)
+        # Belief-corrected, NON-OVERLAPPING determinization: corrected_deck() returns the unseen
+        # pool ordered [prized..., deck...]; we seat the front prize_n as prizes and the next
+        # deck_n as the draw pile (matching engine_rs' non-overlapping slice contract). The old
+        # path sliced your_deck and your_prize from the same front of pool (overlapping) AND could
+        # place a prized card in the searchable deck — both fixed here.
+        your_deck = None
+        your_prize = None
+        if _corrected_deck is not None:
+            try:
+                ordered = _corrected_deck(obs, list(decklist), prized_counter)
+                if ordered and len(ordered) >= prize_n:
+                    your_prize = ordered[:prize_n]
+                    your_deck = ordered[prize_n: prize_n + deck_n]
+            except Exception:
+                your_deck = None
+        if not your_deck:  # fallback: original behavior (never make it worse than before)
+            pool = (list(decklist) * 2) if decklist else [1]
+            your_deck = pool[:deck_n]
+            your_prize = pool[:prize_n]
+        if not your_prize:
+            your_prize = (list(decklist) or [1])[:prize_n]
         opp_n = max(opp.deckCount, 1)
         opponent_deck = [1072] * opp_n          # placeholder basic (Snorlax) — hidden info
         opponent_prize = [1072] * max(len(opp.prize), 1)
