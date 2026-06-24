@@ -19,7 +19,7 @@ class PrizeTracker:
     def update(self, obs, obs_dict=None):
         yi = obs.current.yourIndex
         player = obs.current.players[yi]
-        prize_count = len(player.prize)
+        prize_count = len(player.prize or [])
         hand_by_serial = {
             card.serial: card.id
             for card in player.hand or []
@@ -39,15 +39,25 @@ class PrizeTracker:
         self._last_prize_count = prize_count
         self._last_hand_by_serial = hand_by_serial
 
-        if self._prized is not None:
-            return
+        # Prize cards are only deducible when the full deck is visible (during a
+        # search effect). Re-deduce on every such frame so we can both make the
+        # first inference AND cross-check an existing one.
         if obs.select is None or obs.select.deck is None:
             return
         if len(obs.select.deck) != player.deckCount:
             return
         inferred = self._deduce(obs, player, yi)
-        if inferred is not None:
-            self._prized = inferred
+
+        if self._prized is None:
+            if inferred is not None:
+                self._prized = inferred
+        elif inferred is not None and inferred != self._prized:
+            # A fresh confident deduction disagrees with what we believed. This
+            # happens when the prize set mutated with no count *decrease* (a card
+            # placed under prizes, or a prize swap) — invisible to the take path
+            # above, which would otherwise leave _prized confidently wrong. Fall
+            # back to unknown: a wrong inference is worse than none.
+            self._prized = None
 
     def _deduce(self, obs, player, player_index):
         remaining = Counter(self._decklist)
@@ -83,7 +93,7 @@ class PrizeTracker:
         if any(count < 0 for count in remaining.values()):
             return None
         inferred = Counter({cid: count for cid, count in remaining.items() if count > 0})
-        if sum(inferred.values()) != len(player.prize):
+        if sum(inferred.values()) != len(player.prize or []):
             return None
         return inferred
 
