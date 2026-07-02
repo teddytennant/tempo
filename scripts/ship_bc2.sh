@@ -12,39 +12,25 @@ OUT="/home/gradient/projects/ai/tempo/agent/submission_bc2.tar.gz"
 
 DECK="$DECK" NPZ="$NPZ" bash agent/build_bc2.sh "$OUT"
 
-# Packed smoke: untar to a temp dir and drive the packed main.py through deck phase +
-# a couple of real-engine decisions, exactly as extracted.
+# Packed smoke: untar to a temp dir and run a FULL kaggle_environments cabt mirror episode on the
+# extracted main.py — the exact harness Kaggle validation uses (agents loaded via exec: catches
+# __file__-undefined and every other loader-context bug our module-import smokes cannot see).
 TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
 tar -xzf "$OUT" -C "$TMP"
-LIBSTDCXX="$(gcc -print-file-name=libstdc++.so.6 2>/dev/null || true)"
-( cd "$TMP" && LD_LIBRARY_PATH="$(dirname "$LIBSTDCXX"):${LD_LIBRARY_PATH:-}" \
-  "$OLDPWD/.venv/bin/python" - <<'EOF'
-import main
-d = main.agent({"select": None})
-assert isinstance(d, list) and len(d) == 60, f"deck phase broken: {len(d) if isinstance(d,list) else d}"
-assert main._net is not None, "model.npz did not load in packed layout"
-from cg.game import battle_start, battle_select, battle_finish
-obs, _ = battle_start(d, d)
-assert obs is not None, "engine rejected the deck"
-steps = 0
-try:
-    for _ in range(200):
-        from cg.api import to_observation_class
-        o = to_observation_class(obs)
-        if o.current is not None and getattr(o.current, "result", -1) != -1:
-            break
-        if o.select is None:
-            break
-        sel = main.agent(obs)
-        n = len(o.select.option)
-        assert isinstance(sel, list) and all(0 <= i < n for i in sel) and sel, f"illegal selection {sel} (n={n})"
-        obs = battle_select(sel)
-        steps += 1
-finally:
-    battle_finish()
-print(f"PACKED SMOKE OK: net loaded, deck accepted, {steps} legal decisions")
+SMOKE_DIR="$TMP" ./scripts/run.sh - <<'EOF'
+import os, sys
+d = os.environ["SMOKE_DIR"]
+import kaggle_environments as k
+env = k.make("cabt", configuration={"runTimeout": 600}, debug=True)
+steps = env.run([os.path.join(d, "main.py"), os.path.join(d, "main.py")])
+last = steps[-1]
+statuses = [a.status for a in last]
+rewards = [a.reward for a in last]
+print(f"episode steps={len(steps)} statuses={statuses} rewards={rewards}")
+assert all(s == "DONE" for s in statuses), f"validation-style episode failed: {statuses}"
+assert all(r is not None for r in rewards), f"agent errored (reward None): {rewards}"
+print("PACKED SMOKE OK: full cabt mirror episode completed with both agents DONE")
 EOF
-)
 
 echo "packed smoke passed for $OUT (deck=$(basename "$DECK"), net=$(basename "$NPZ"))"
 if [ "$DRY" = "--dry-run" ]; then

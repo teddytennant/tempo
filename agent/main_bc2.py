@@ -16,7 +16,15 @@ crash-safe (validation plays you vs a copy of yourself; one exception forfeits t
 import os
 import sys
 
-_HERE = os.path.dirname(os.path.abspath(__file__))
+# Kaggle's loader execs this file, so __file__ may be undefined — resolve our home dir defensively
+# (the proven pattern from the rules main.py; an unguarded __file__ here ERRORs the validation).
+if "__file__" in globals():
+    _HERE = os.path.dirname(os.path.abspath(__file__))
+else:
+    # kaggle_environments appends the agent dir to sys.path only DURING the exec, so everything
+    # location-dependent (deck, model, net/) must resolve right here at import time.
+    _cands = [os.getcwd(), "/kaggle_simulations/agent"] + [p for p in sys.path if p]
+    _HERE = next((p for p in _cands if os.path.exists(os.path.join(p, "deck.csv"))), os.getcwd())
 sys.path.insert(0, _HERE)
 sys.path.insert(0, os.path.join(_HERE, "net"))
 
