@@ -33,7 +33,10 @@ except Exception:
 
 
 def _read_deck():
-    for p in [os.path.join(_HERE, "deck.csv"), "deck.csv", "/kaggle_simulations/agent/deck.csv"]:
+    for p in [os.environ.get("BC2_DECK") or "",
+              os.path.join(_HERE, "deck.csv"), "deck.csv", "/kaggle_simulations/agent/deck.csv"]:
+        if not p:
+            continue
         if os.path.exists(p):
             with open(p) as f:
                 return [int(x) for x in f.read().splitlines() if x.strip()][:60]

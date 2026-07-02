@@ -109,7 +109,7 @@ def main():
     ap.add_argument("--games", type=int, default=40)
     ap.add_argument("--me", choices=["deploy", "bc2"], default="deploy",
                     help="which agent to instrument: deploy=agent/main.py, bc2=agent/main_bc2.py")
-    ap.add_argument("--opp", choices=["floor", "random", "deploy"], default="floor")
+    ap.add_argument("--opp", choices=["floor", "random", "deploy", "bc2"], default="floor")
     ap.add_argument("--deck", default=os.path.join(_ROOT, "agent", "deck.csv"))
     ap.add_argument("--opp_deck", default=None, help="opponent deck.csv (default: same as --deck)")
     args = ap.parse_args()
@@ -125,7 +125,11 @@ def main():
         deploy = main_bc2.agent
     else:
         deploy = _load_deploy()
-    opp = {"floor": _load_floor(), "random": random_agent, "deploy": _load_deploy()}[args.opp]
+    if args.opp == "bc2":
+        import main_bc2
+        opp = main_bc2.agent
+    else:
+        opp = {"floor": _load_floor(), "random": random_agent, "deploy": _load_deploy()}[args.opp]
 
     agg = {"we_won": 0, "we_lost": 0, "draw": 0, "unfinished": 0, "error_games": 0,
            "deckout_loss": 0, "no_offense_loss": 0, "start_fail": 0}
