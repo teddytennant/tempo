@@ -107,6 +107,8 @@ def play_instrumented(deploy, opp, deck0, deck1, me_i_target=0, max_steps=2000):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--games", type=int, default=40)
+    ap.add_argument("--me", choices=["deploy", "bc2"], default="deploy",
+                    help="which agent to instrument: deploy=agent/main.py, bc2=agent/main_bc2.py")
     ap.add_argument("--opp", choices=["floor", "random", "deploy"], default="floor")
     ap.add_argument("--deck", default=os.path.join(_ROOT, "agent", "deck.csv"))
     ap.add_argument("--opp_deck", default=None, help="opponent deck.csv (default: same as --deck)")
@@ -118,7 +120,11 @@ def main():
     import arena.selfplay as sp
     sp._DECK = deck  # random/floor agents read this
 
-    deploy = _load_deploy()
+    if args.me == "bc2":
+        import main_bc2
+        deploy = main_bc2.agent
+    else:
+        deploy = _load_deploy()
     opp = {"floor": _load_floor(), "random": random_agent, "deploy": _load_deploy()}[args.opp]
 
     agg = {"we_won": 0, "we_lost": 0, "draw": 0, "unfinished": 0, "error_games": 0,
