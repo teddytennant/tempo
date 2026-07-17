@@ -31,6 +31,23 @@ attack available (5:9270); Punk Up always accepted, energy count scaled by remai
 routes through here. It must be consulted BEFORE the cinderace/fezandipiti/dunsparce specialists,
 whose gates key on cards this list also plays (Hero's Cape 1159 / Fezandipiti 140 + Lillie 1227 +
 Xerosic 1197 / Dunsparce 305/66).
+
+v2 — the Crustle-wall (Mysterious Rock Inn) doctrine, all `_vs_crustle`-gated (trace-verified):
+  • Their Battle Cage VOIDS Adrena counters moved to their bench (engine-verified — the "abilities
+    bypass Cage" folklore is wrong); attack damage (Shadow Bullet's snipe) still lands. When Cage
+    is up, counters go to their Active (stick or burn one of their 8 finite ACTIVE-only heals).
+  • The one heal-proof kill: a SAME-TURN burst — front a non-ex attacker (Dudunsparce Land Crush
+    90 / Morgrem 60 / Yveltal 110) and finish with Adrena moves before their heal turn.
+  • Punk Up feeds only Marnie's bodies, so the killers (3 Munkidori + Dudunsparce) eat ONLY hand-
+    drawn darks: Punk Up takes are capped at 1-2 to keep the pool drawable; once 2 monkeys are
+    fed the Dudunsparce 3rd energy is THE win condition and outranks every other attach.
+  • Feed discipline: they have no gust, so the bench is a sanctuary; prizes are only what dies in
+    the Active seat. Healthy Grimmsnarl tanks (240-320/hit ammo conversion), rotates out at
+    lethal-threat (retreat 2 < 2 prizes), heals 30-90/turn via Adrena sourcing; chaff feeds
+    1-prize-per-turn; the monkeys and Fezandipiti front absolutely last.
+  • Lillie with hand>=8 GROWS the deck (shuffle-hand-back); deck throttles only bind once the
+    engine (2 fed monkeys + a Grimmsnarl) is up.
+Measured 2026-07-17: bot:crustle 2.5%->~20%, deploy+crustle 2.5%->~10% (40-game arms).
 """
 from __future__ import annotations
 
@@ -539,6 +556,15 @@ def _incoming_threat(state, me_i, target=None) -> int:
         if atk is None or len(getattr(atk, "energies", None) or []) > have:
             continue
         d = atk.damage or 0
+        if aid == SUPERB_SCISSORS:
+            # +20 per Grow Grass Energy on the attacker, BEFORE weakness doubling — an e3 wall
+            # with two pumps hits our Grass-weak line for 320, not the naive 240.
+            try:
+                d += 20 * sum(1 for c in (getattr(oa, "energyCards", None)
+                                          or getattr(oa, "energies", None) or [])
+                              if _id(c) == GROW_GRASS)
+            except Exception:
+                pass
         if d and mcd is not None:
             try:
                 if mcd.weakness is not None and mcd.weakness == ocd.energyType:
@@ -553,6 +579,112 @@ def _incoming_threat(state, me_i, target=None) -> int:
 
 def _count_in_play(state, me_i, cid) -> int:
     return sum(1 for p in _my_mons(state, me_i) if _id(p) == cid)
+
+
+GROW_GRASS = 18       # the wall's damage-pump special energy (+20 to Superb Scissors each)
+SUPERB_SCISSORS = 479  # Crustle's only attack: 120 + 20/GrowGrass, DOUBLED into our Grass-weak line
+BATTLE_CAGE = 1264    # the wall's stadium: counters from opponent ATTACKS/ABILITIES can't be
+                      # placed on ANY benched Pokémon (attack damage like our snipe still lands)
+
+
+def _opp_cage_up(state, me_i) -> bool:
+    """Their Battle Cage is in play: Adrena counters moved to their BENCH silently vanish
+    (verified in traces — 6 straight turns of moved counters landed as nothing). Only their
+    Active takes counters until we overwrite the stadium."""
+    try:
+        return any(c is not None and _id(c) == BATTLE_CAGE
+                   and getattr(c, "playerIndex", None) == 1 - me_i
+                   for c in (state.stadium or []))
+    except Exception:
+        return False
+
+
+def _monkeys_ready(state, me_i) -> int:
+    """Our Munkidori with a {D} attached = Adrena-Brain activations available per turn."""
+    return sum(1 for p in _my_mons(state, me_i)
+               if _id(p) == MUNKIDORI and _has_dark(p))
+
+
+def _movable_counters(state, me_i) -> int:
+    """Damage we can shift onto their board THIS turn: 30 per ready Munkidori, capped by the
+    ammunition actually sitting on our side."""
+    return min(_our_damage_total(state, me_i), 30 * _monkeys_ready(state, me_i))
+
+
+def _wall_threat(state, me_i, target=None) -> int:
+    """Max damage the wall can put on `target` NEXT turn from ANY of its Crustles — not just the
+    current Active (after a Boss gust the harmless Dwebble up front hides the fueled Crustle
+    that promotes right back; rotation decisions must see it)."""
+    base = _incoming_threat(state, me_i, target)
+    if not _vs_crustle(me_i):
+        return base
+    mine = target if target is not None else _my_active(state, me_i)
+    mcd = _meta(_id(mine)) if mine is not None else None
+    try:
+        opp = state.players[1 - me_i]
+        for p in (list(opp.active or []) + list(opp.bench or [])):
+            if p is None or _id(p) != 345:
+                continue
+            if _energy_count(p) < 2:
+                continue   # can't pay Superb Scissors even with next turn's attach
+            d = 120
+            try:
+                d += 20 * sum(1 for c in (getattr(p, "energyCards", None)
+                                          or getattr(p, "energies", None) or [])
+                              if _id(c) == GROW_GRASS)
+            except Exception:
+                pass
+            if mcd is not None and mcd.weakness is not None and mcd.weakness == 1:
+                d *= 2   # Grass attacker into a Grass-weak body
+            base = max(base, d)
+    except Exception:
+        pass
+    return base
+
+
+def _wall_engine_up(state, me_i) -> bool:
+    """The wall-grind engine is assembled: 2+ fed Munkidori and a Grimmsnarl body. Deck-out
+    discipline only pays once this is true — before that, dig at full elite speed."""
+    return (_monkeys_ready(state, me_i) >= 2
+            and any(_id(p) == GRIMMSNARL for p in _my_mons(state, me_i)))
+
+
+def _best_attack_of(b, target, me_i) -> int:
+    """Max non-blanked damage `b` could deal to `target` with its current energy."""
+    cd = _meta(_id(b))
+    if cd is None:
+        return 0
+    have = _energy_count(b)
+    best = 0
+    for aid in (getattr(cd, "attacks", None) or []):
+        atk = _ATK.get(aid)
+        if atk is None or len(getattr(atk, "energies", None) or []) > have:
+            continue
+        if aid in EX_ATTACKS and _vs_crustle(me_i) and _id(target) == 345:
+            continue
+        best = max(best, (atk.damage or 0))
+    return best
+
+
+def _wall_burst_body(state, me_i):
+    """The wall kill-shot: a benched non-ex attacker (Dudunsparce's Land Crush 90, Morgrem's
+    Corkscrew 60, Yveltal's Dark Feather 110) whose attack plus this turn's Adrena moves kills
+    the opponent's Active in ONE turn — their Cook/Ice Cream heal on THEIR turn, so a same-turn
+    kill is heal-proof. Returns the burst body, else None."""
+    oa = _opp_active(state, me_i)
+    if oa is None:
+        return None
+    ohp = getattr(oa, "hp", 0) or 0
+    if ohp <= 0:
+        return None
+    movable = _movable_counters(state, me_i)
+    for b in _my_bench(state, me_i):
+        if _id(b) not in (DUDUNSPARCE, MORGREM, YVELTAL):
+            continue
+        dmg = _best_attack_of(b, oa, me_i)
+        if dmg > 0 and ohp <= dmg + movable:
+            return b
+    return None
 
 
 def _our_damage_total(state, me_i) -> int:
@@ -598,6 +730,8 @@ def score_main(obs, o, me_i) -> float:
         oid = _id(owner)
         deck_n = _deck_count(state, me_i)
         if oid == FEZANDIPITI:
+            if vs_cru and deck_n < 25:
+                return -1.0    # the wall race is won on deck length: no luxury draws
             return 2610.0 if deck_n >= 4 else -1.0   # Flip the Script: free +3, fired early
         if oid == DUDUNSPARCE:
             # Run Away Draw: elite usage is >=97% at every deck size until deckCount <= 3.
@@ -606,12 +740,13 @@ def score_main(obs, o, me_i) -> float:
             if len(_my_mons(state, me_i)) <= 1:
                 return -1.0    # never shuffle away our only Pokémon
             if vs_cru:
-                # The wall's endgame is a deck-out grind and our kill-shot on its last Crustle
-                # is Adrena burst + Land Crush: never recycle a fueled Dudunsparce, and stop
-                # burning deck for cards we don't need.
-                if _energy_count(owner) >= 2:
+                # The wall race is a deck-out grind and Dudunsparce IS the Land Crush burst
+                # piece: never recycle one that has any energy. Dig freely while the engine is
+                # still assembling; once it's up, every optional draw is a deck-out concession.
+                if _energy_count(owner) >= 1:
                     return -1.0
-                if deck_n < 25 and len(_hand(state, me_i)) > 5:
+                if _wall_engine_up(state, me_i) and (
+                        deck_n < 25 or len(_hand(state, me_i)) > 4):
                     return -1.0
             return 2270.0
         if oid == SPIKEMUTH:
@@ -619,6 +754,8 @@ def score_main(obs, o, me_i) -> float:
             # nothing is missing (the elite decline ~40% from own-turn 7 on).
             if deck_n <= _SEARCH_FLOOR or not _marnies_available(state, me_i):
                 return -1.0
+            if vs_cru and not _line_need(state, me_i):
+                return -1.0    # every idle tutor is a turn off our deck-out clock
             if not _line_need(state, me_i) and deck_n < 20:
                 return -1.0
             return 2460.0
@@ -669,6 +806,16 @@ def score_main(obs, o, me_i) -> float:
         if cid == LILLIE_DET:
             if sup_done or deck_n < 6:
                 return -1.0
+            if vs_cru:
+                # Lillie SHUFFLES THE HAND BACK: with a fat hand of dead supporters it GROWS the
+                # deck (hand 10 -> +10, draw 6-8 -> net positive) and recycles dead cards into
+                # live energy — the anti-deck-out tech. While the engine is still assembling,
+                # dig at elite speed; once it's up, mid-hand Lillies are a deck concession.
+                if hand_n >= 8:
+                    return 2060.0
+                if not _wall_engine_up(state, me_i):
+                    return 2060.0 if hand_n <= 6 else 1200.0
+                return 2060.0 if (hand_n <= 4 and deck_n >= 25) else -1.0
             if hand_n <= 6:
                 return 2060.0   # elite median hand at play: 6
             if hand_n <= 9:
@@ -678,6 +825,13 @@ def score_main(obs, o, me_i) -> float:
             if sup_done or deck_n <= _SEARCH_FLOOR:
                 return -1.0
             need = _line_need(state, me_i)
+            if vs_cru:
+                # Dawn is the engine-assembler here: Munkidori (Basic) + Dudunsparce (Stage 1) +
+                # Grimmsnarl (Stage 2) in one card. "Need" must include the wall-killers.
+                wall_need = (_count_in_play(state, me_i, MUNKIDORI) < 3
+                             or not any(_id(p) in (DUNSPARCE, DUDUNSPARCE)
+                                        for p in _my_mons(state, me_i)))
+                return 2020.0 if ((need or wall_need) and deck_n >= 15) else -1.0
             return 2020.0 if (need or deck_n >= 20) else 800.0
         if cid == XEROSIC:
             if sup_done:
@@ -697,8 +851,8 @@ def score_main(obs, o, me_i) -> float:
                          + _deck_available(state, me_i, BUDEW))
             if fetchable <= 0:
                 return -1.0
-            if vs_cru and bench_n >= 2 and deck_n < 30:
-                return -1.0    # wall endgame = deck-out race: stop thinning for spare bodies
+            if vs_cru and (bench_n >= 3 or (bench_n >= 2 and deck_n < 30)):
+                return -1.0    # wall bench seats are a fixed budget; stop thinning for bodies
             if bench_n <= 1:
                 return 2050.0
             if bench_n <= 3:
@@ -714,8 +868,12 @@ def score_main(obs, o, me_i) -> float:
                 return -1.0
             hits_need = any(_deck_available(state, me_i, c) > 0 for c in need
                             if c != RARE_CANDY and c != GRIMMSNARL)
-            if hits_need or _count_in_play(state, me_i, MUNKIDORI) < 2:
+            monkey_cap = 3 if vs_cru else 2   # vs the wall the 3rd Munkidori is +30 kill-rate/turn
+            if (hits_need or (_count_in_play(state, me_i, MUNKIDORI) < monkey_cap
+                              and _deck_available(state, me_i, MUNKIDORI) > 0)):
                 return 1900.0
+            if vs_cru:
+                return -1.0    # no idle thinning in the deck-out race
             return 1500.0 if deck_n >= 15 else 300.0
         if cid == TOOL_SCRAPPER:
             opp_tools = 0
@@ -735,17 +893,31 @@ def score_main(obs, o, me_i) -> float:
             if bench_n == 0:
                 return 2100.0   # never risk a no-Active loss
             if cid == IMPIDIMP:
+                if vs_cru:
+                    # Bench seats are permanent vs the gustless wall: budget = 3 monkeys +
+                    # G pipeline + Dudunsparce line. Two Impidimps (active line + next G) max.
+                    return 2000.0 if _count_in_play(state, me_i, IMPIDIMP) < 2 else 300.0
                 return 2000.0 if _count_in_play(state, me_i, IMPIDIMP) < 3 else 1200.0
             if cid == MUNKIDORI:
-                # The Adrena engine: elite bench it steadily all game (1-2 copies working).
-                return 1990.0 if _count_in_play(state, me_i, MUNKIDORI) < 2 else 400.0
+                # The Adrena engine: elite bench 1-2 copies; vs the wall ALL THREE (90/turn of
+                # counters that ignore Mysterious Rock Inn is our whole kill rate).
+                cap = 3 if vs_cru else 2
+                return 1990.0 if _count_in_play(state, me_i, MUNKIDORI) < cap else 400.0
             if cid == DUNSPARCE:
                 return 1980.0   # replaces the shuffled-away Dudunsparce line
             if cid == FEZANDIPITI:
+                if vs_cru:
+                    # Not Grass-weak and 210HP: the only body besides a Cape'd Grimmsnarl that
+                    # survives TWO wall hits — a legitimate backup tank, benched at low priority.
+                    return 700.0 if bench_n < 4 else -1.0
                 return 900.0    # elite bench it early with no prize gate, but only ~18% of games
             if cid == YVELTAL:
+                if vs_cru:
+                    return 900.0  # free-retreat pivot + Dark Feather 110 actually lands on walls
                 return 500.0    # elite almost never bench it (70 total in 2,020 games)
             if cid == BUDEW:
+                if vs_cru:
+                    return -1.0  # wastes the bench seat; only ever useful as a forced sacrifice
                 return 250.0    # 30HP liability after turn 1
             return 900.0
 
@@ -760,13 +932,19 @@ def score_main(obs, o, me_i) -> float:
         tgt = _get(obs, getattr(o, "inPlayArea", None), getattr(o, "inPlayIndex", None), me_i)
         tid = _id(tgt)
         ten = _energy_count(tgt)
-        # Hero's Cape: Grimmsnarl ex only (811/974 elite attaches; Morgrem as a stopgap).
+        # Hero's Cape: Grimmsnarl ex only (811/974 elite attaches; Morgrem as a stopgap). Never
+        # waste the single ACE SPEC on an off-line body — hold it (observed loss mode: Cape on a
+        # turn-2 Munkidori). vs the wall an early Cape on the evolving Impidimp is correct: the
+        # tool survives evolution, and 420HP + Adrena healing turns 2 weakness hits into 3.
         if cid == HEROS_CAPE:
             if tid == GRIMMSNARL:
                 return 1500.0 if getattr(o, "inPlayArea", None) == AreaType.ACTIVE else 1420.0
             if tid == MORGREM:
                 return 1350.0
-            return 100.0
+            if (vs_cru and tid == IMPIDIMP
+                    and not any(_id(p) in (GRIMMSNARL, MORGREM) for p in _my_mons(state, me_i))):
+                return 900.0
+            return -1.0
         # Manual energy: Munkidori at ~95% priority (Punk Up cannot legally feed it, and every
         # copy needs one {D} for Adrena-Brain); then Grimmsnarl. Never Dudunsparce/Yveltal.
         # Prefer a BENCHED Munkidori: an active one pays its retreat by discarding the very
@@ -774,16 +952,24 @@ def score_main(obs, o, me_i) -> float:
         if tid == MUNKIDORI and not _has_dark(tgt):
             return 1150.0 + (30.0 if getattr(o, "inPlayArea", None) == AreaType.BENCH else 0.0)
         if vs_cru and tid == DUDUNSPARCE and ten < 3:
-            # The burst piece vs the wall: Land Crush 90 (non-ex) + 3x Adrena 90 kills the last
-            # Crustle through its heals. Fuel it once the Munkidori are fed.
-            return 1050.0
+            # The burst piece vs the wall: Land Crush 90 (non-ex) + Adrena moves kill a fresh
+            # 150HP Crustle in ONE turn, heal-proof — the only damage path that works against a
+            # thin-bench wall. With 2 monkeys already fed, its 3rd energy IS the win condition
+            # (observed: a Dudunsparce sat at e2 for eight passive turns while we lost).
+            if _monkeys_ready(state, me_i) >= 2:
+                return 1160.0
+            return 1120.0 + (20.0 if getattr(o, "inPlayArea", None) == AreaType.BENCH else 0.0)
         if tid == GRIMMSNARL:
             if ten < 2:
                 bonus = 60.0 if getattr(o, "inPlayArea", None) == AreaType.ACTIVE else 0.0
-                return 1100.0 + bonus
+                return (1000.0 if vs_cru else 1100.0) + bonus
             return 700.0 if ten < 3 else 100.0
+        if tid == DUDUNSPARCE and ten >= 3:
+            return 60.0
         if tid in (IMPIDIMP, MORGREM) and ten < 2:
             return 950.0
+        if vs_cru:
+            return 60.0    # never soak a precious dark into a chaff body (Yveltal/Dunsparce...)
         return 200.0 if ten < 3 else 50.0
 
     if t == OptionType.ATTACK:
@@ -797,9 +983,15 @@ def score_main(obs, o, me_i) -> float:
         if aid == SHADOW_BULLET:
             score += 40.0   # 97% of elite attacks; the 30 bench snipe is real extra value
         if aid == FILCH:
+            if vs_cru and deck_n < 30:
+                return -1.0    # a draw we don't need, a card off the deck-out clock
             return 130.0 if deck_n >= _FILCH_FLOOR else -1.0
         if aid == ITCHY_POLLEN:
-            return 350.0 if _turn(state) <= 3 else 120.0
+            if _turn(state) <= 3:
+                return 350.0
+            # vs the wall the item lock blanks their Jumbo Ice Cream heals + Poffins for a turn,
+            # and the free 10 actually lands (Budew is not an ex).
+            return 300.0 if vs_cru else 120.0
         if aid == TRADING_PLACES:
             if any(_id(b) == GRIMMSNARL and _energy_count(b) >= 2 for b in _my_bench(state, me_i)):
                 return 200.0
@@ -822,12 +1014,23 @@ def score_main(obs, o, me_i) -> float:
         # prizes (the wall's weakness-doubled 240 two-shots a 320HP active; a bench stays safe).
         active = _my_active(state, me_i)
         aid_ = _id(active)
+        # Wall kill-shot: retreat into a benched burst body (Dudunsparce/Morgrem/Yveltal) when
+        # its attack + this turn's Adrena moves kill their Active through the ACTIVE-only heals
+        # (a same-turn kill denies the Cook/Ice Cream answer entirely). Skip if the current
+        # Active can already do the job itself.
+        if vs_cru and _wall_burst_body(state, me_i) is not None:
+            oa_ = _opp_active(state, me_i)
+            aff_now = _affordable_damage(state, me_i)
+            ohp_ = (getattr(oa_, "hp", 0) or 0) if oa_ is not None else 0
+            if not (aff_now > 0 and ohp_ and
+                    ohp_ <= aff_now + _movable_counters(state, me_i)):
+                return 1010.0
         grim_ready = any(_id(b) == GRIMMSNARL and _energy_count(b) >= 2
                          for b in _my_bench(state, me_i))
         if aid_ != GRIMMSNARL and grim_ready:
             return 1000.0 if aid_ in (MUNKIDORI, BUDEW, DUNSPARCE, IMPIDIMP, YVELTAL) else 800.0
         if aid_ == GRIMMSNARL:
-            threat = _incoming_threat(state, me_i)
+            threat = _wall_threat(state, me_i) if vs_cru else _incoming_threat(state, me_i)
             hp = getattr(active, "hp", 0) or 0
             if threat >= hp > 0:
                 for b in _my_bench(state, me_i):
@@ -915,15 +1118,27 @@ def score_sub(obs, o, me_i, context) -> float:
                                      SelectContext.DAMAGE_COUNTER_ANY):
                         # Adrena counters DO land on Crustle (ability, not attack) — but their
                         # heals are ACTIVE-only, so counters on the active evaporate while a
-                        # benched Crustle/Dwebble keeps every counter until it dies. Exception:
-                        # a boardless wall's last mon — chip it toward the Land Crush burst
-                        # (its per-turn heal is capped ~150 and Cook competes with Cheren).
+                        # benched Crustle/Dwebble keeps every counter until it dies. Exceptions:
+                        # (1) a boardless wall's last mon — chip it; (2) BURST: our affordable
+                        # attack alone can't kill their Active but attack + this turn's moves
+                        # can — pile the counters on and finish before their heal turn; (3) their
+                        # Battle Cage is up — bench-bound counters VANISH (verified), so the
+                        # Active is the only destination that exists at all (and every counter
+                        # it takes either sticks or burns one of their 8 finite heal cards).
+                        aff = _affordable_damage(state, me_i)
+                        cage = _opp_cage_up(state, me_i)
                         if not _opp_bench(state, me_i):
                             score += 300.0
                         elif o.area == AreaType.ACTIVE:
-                            score -= 150.0
+                            if (0 < aff < hp
+                                    <= aff + _movable_counters(state, me_i)):
+                                score += 650.0
+                            elif cage:
+                                score += 200.0
+                            else:
+                                score -= 150.0
                         else:
-                            score += 250.0
+                            score += -800.0 if cage else 250.0
             elif isinstance(card, Pokemon):
                 score -= _opponent_value(card)
             return score
@@ -960,14 +1175,27 @@ def score_sub(obs, o, me_i, context) -> float:
         # so below the threshold only the FIRST energy option scores positive (ranker takes one).
         if context == SelectContext.ATTACH_TO and cid == BASIC_DARK and o.area == AreaType.DECK:
             deck_n = _deck_count(state, me_i)
-            if deck_n >= 18:
+            if vs_cru:
+                # Punk Up can only feed the Marnie's line — the monkeys and Dudunsparce (the
+                # actual wall-killers) eat ONLY manually-attached darks from HAND. Every extra
+                # Punk Up take strips a dark from the drawable pool (observed: monkeys sat at e0
+                # until turn 14). Take just the G's working set; leave the rest drawable — and
+                # only 1 while the burst engine still waits on hand-fed darks.
+                hungry = (_count_in_play(state, me_i, MUNKIDORI) > _monkeys_ready(state, me_i)
+                          or any(_id(p) == DUDUNSPARCE and _energy_count(p) < 3
+                                 for p in _my_mons(state, me_i)))
+                k = 1 if hungry else (2 if deck_n >= 18 else 1)
+            elif deck_n >= 18:
                 return score + 100.0
+            else:
+                k = 1
             try:
                 opts = obs.select.option
-                first = next(i for i, opt in enumerate(opts)
-                             if getattr(opt, "area", None) == AreaType.DECK
-                             and _id(_get(obs, opt.area, opt.index, pidx)) == BASIC_DARK)
-                return score + (100.0 if opts[first] is o else -2100.0)
+                darks = [i for i, opt in enumerate(opts)
+                         if getattr(opt, "area", None) == AreaType.DECK
+                         and _id(_get(obs, opt.area, opt.index, pidx)) == BASIC_DARK]
+                pos = next(j for j, i in enumerate(darks) if opts[i] is o)
+                return score + (100.0 if pos < k else -2100.0)
             except Exception:
                 return score + 100.0
 
@@ -1023,12 +1251,25 @@ def score_sub(obs, o, me_i, context) -> float:
                 score += 200.0
             elif cid == IMPIDIMP:
                 score += 210.0 if _turn(state) <= 2 else 160.0
+                if vs_cru and (_count_in_play(state, me_i, IMPIDIMP)
+                               + hand_ids.count(IMPIDIMP)) >= 2:
+                    score -= 140.0   # a third Impidimp is a wasted permanent bench seat
             elif cid == DUDUNSPARCE:
                 score += 170.0
+                if vs_cru and not any(_id(p) == DUDUNSPARCE for p in _my_mons(state, me_i)):
+                    score += 80.0    # the Land Crush burst body outranks a spare Morgrem
             elif cid == DUNSPARCE:
                 score += 150.0
+                if vs_cru and not any(_id(p) in (DUNSPARCE, DUDUNSPARCE)
+                                      for p in _my_mons(state, me_i)):
+                    score += 60.0    # the Land Crush line must exist
             elif cid == MUNKIDORI:
-                score += 190.0 if _count_in_play(state, me_i, MUNKIDORI) < 2 else 90.0
+                if vs_cru:
+                    # THE wall-killer: 30/turn of Rock-Inn-proof counters per copy. Fetch every
+                    # copy ahead of the line fillers.
+                    score += 360.0 if _count_in_play(state, me_i, MUNKIDORI) < 3 else 90.0
+                else:
+                    score += 190.0 if _count_in_play(state, me_i, MUNKIDORI) < 2 else 90.0
             elif cid == YVELTAL:
                 score += 60.0
             elif cid == FEZANDIPITI:
@@ -1052,7 +1293,50 @@ def score_sub(obs, o, me_i, context) -> float:
                 score += 400.0
             # Promote after a KO (TO_ACTIVE among our mons): powered Grimmsnarl, else the piece
             # about to become one (Impidimp with Candy+Grimmsnarl in hand), never the 30HP Budew.
-            if context == SelectContext.TO_ACTIVE and pidx == me_i:
+            # SWITCH (retreat replacement) joins TO_ACTIVE only under the wall doctrine — for
+            # healthy matchups the elite-calibrated statics already pick the retreat target.
+            if (context == SelectContext.TO_ACTIVE
+                    or (context == SelectContext.SWITCH and vs_cru)) and pidx == me_i:
+                if vs_cru:
+                    # Wall feed-discipline (the observed 0-6 loss promoted a damaged energyless
+                    # Grimmsnarl — 2 free prizes): healthy Grimmsnarl soaks and converts their
+                    # hits into Adrena ammo; a dying one NEVER fronts; the engine pieces
+                    # (Munkidori) and the 2-prize Fezandipiti stay off the line; the fueled
+                    # Dudunsparce fronts exactly when the Land Crush burst kills their Active.
+                    # Gate on the CURRENT attacker's threat (the pessimistic any-Crustle view
+                    # produced terminal G-hoarding: two fueled 320s rotting while monkeys fed).
+                    threat = _incoming_threat(state, me_i, card)
+                    hp_ = getattr(card, "hp", 0) or 0
+                    burst_body = _wall_burst_body(state, me_i)
+                    if cid == GRIMMSNARL:
+                        if hp_ > threat:
+                            score += 520.0 + (60.0 if _energy_count(card) >= 2 else 0.0)
+                        else:
+                            score -= 700.0   # feeds 2 prizes for zero output
+                    elif cid == DUDUNSPARCE:
+                        if burst_body is card:
+                            score += 650.0   # front it and kill their Active THIS turn
+                        else:
+                            score -= 250.0   # save the burst piece
+                    elif cid == YVELTAL:
+                        score += (650.0 if burst_body is card else 340.0)
+                    elif cid == IMPIDIMP:
+                        score += 200.0 + (350.0 if (GRIMMSNARL in hand_ids
+                                                    and RARE_CANDY in hand_ids) else 0.0)
+                    elif cid == MORGREM:
+                        score += (650.0 if burst_body is card else 200.0)
+                    elif cid == DUNSPARCE:
+                        score += 200.0       # 1-prize chaff — the cheapest feed
+                    elif cid == BUDEW:
+                        score += 180.0       # sacrificial + free Itchy Pollen item lock
+                    elif cid == MUNKIDORI:
+                        score -= 800.0       # the engine feeds ABSOLUTELY last (below a dying G:
+                                             # 2 prizes < losing 30/turn of kill rate forever)
+                    elif cid == FEZANDIPITI:
+                        # 210HP and NOT Grass-weak: eats two wall hits (banking 140-160 of Adrena
+                        # ammo) when it survives the swing; otherwise keep it off the line.
+                        score += -50.0 if hp_ > threat else -850.0
+                    return score
                 if cid == GRIMMSNARL and _energy_count(card) >= 2:
                     score += 500.0
                     threat = _incoming_threat(state, me_i, card)
