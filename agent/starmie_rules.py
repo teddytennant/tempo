@@ -816,6 +816,14 @@ def score_main(obs, o, me_i) -> float:
             if (_VS_GRIM and _id(active) == MEGA_STARMIE
                     and any(_id(b) == MEGA_FROSLASS for b in _my_bench(state, me_i))):
                 return 1455.0
+            # vs Dragapult (REAL LADDER LOSS, ep 86501434): its Lillie/Poké-Pad draw engine held a
+            # 5-9 card hand nearly every turn, so Resentful Refrain (50 x their hand, one {W}) OHKOs
+            # the 320HP Dragapult ex at hand >=7 (>=6 under Gravity Mountain) — the same big-hand
+            # exploit as the Grimmsnarl branch. Front the Froslass line instead of racing the
+            # 3-prize Mega Starmie into 200-damage Phantom Dives.
+            if (_VS_DRAG and _id(active) == MEGA_STARMIE
+                    and any(_id(b) == MEGA_FROSLASS for b in _my_bench(state, me_i))):
+                return 1455.0
             return -1.0                    # generic Switches pointlessly (de-fuels its own attacker)
         if cid == WALLY_COMP:              # heal a Mega BUT strip its Energy -> the deck's core loop
             if sup_done:
@@ -858,6 +866,12 @@ def score_main(obs, o, me_i) -> float:
             # putting it in range of Refrain at hand 6 / Nebula+Jetting. Play it before attacking.
             if _VS_GRIM:
                 return 1640.0
+            # vs Dragapult: Dragapult ex is a Stage-2 — Gravity Mountain drops it 320 -> 290, moving
+            # Refrain's OHKO threshold from hand>=7 to hand>=6 (their real hands run 5-9; ladder loss
+            # ep 86501434) and putting it in Refrain+Jetting / 2x-Nebula range. It also evicts their
+            # Team Rocket's Watchtower. Play it before attacking.
+            if _VS_DRAG:
+                return 1640.0
             return 500.0
 
         # Bare basic Pokémon from hand: board presence.
@@ -887,6 +901,10 @@ def score_main(obs, o, me_i) -> float:
             ev = _id(_get(obs, AreaType.HAND, o.index, me_i))
             if ev == MEGA_FROSLASS:
                 return 1360.0        # Refrain (50 x their 7-11 hand) is the repeated OHKO here
+        if _VS_DRAG:
+            ev = _id(_get(obs, AreaType.HAND, o.index, me_i))
+            if ev == MEGA_FROSLASS:
+                return 1360.0        # Refrain (50 x their 5-9 hand) OHKOs Dragapult ex (ladder loss)
         return 1300.0
 
     if t == OptionType.ATTACH:
@@ -1011,6 +1029,11 @@ def score_main(obs, o, me_i) -> float:
         # vs Grimmsnarl: front the Froslass line — Refrain (50 x their 7-11 hand) is the repeated
         # OHKO on the 320HP Grimmsnarl, and it re-arms for one {W} after every Wally reset.
         if (_VS_GRIM and _id(active) == MEGA_STARMIE
+                and any(_id(b) == MEGA_FROSLASS for b in _my_bench(state, me_i))):
+            return 110.0
+        # vs Dragapult: same big-hand Refrain exploit (ladder loss ep 86501434) — front Froslass
+        # when no Switch is in hand rather than feed the 3-prize Starmie to Phantom Dive.
+        if (_VS_DRAG and _id(active) == MEGA_STARMIE
                 and any(_id(b) == MEGA_FROSLASS for b in _my_bench(state, me_i))):
             return 110.0
         return -1.0
@@ -1285,6 +1308,17 @@ def score_sub(obs, o, me_i, context) -> float:
             # every Wally reset. Steer fetch / placement / evolve-target / promote toward Froslass
             # and keep the 3-prize Starmie off the ACTIVE. No-op outside the Grimmsnarl matchup.
             if _VS_GRIM:
+                to_active = (o.area == AreaType.ACTIVE)
+                if cid in FROSLASS_LINE:
+                    score += 220.0 if to_active else 90.0
+                elif cid in STARMIE_LINE and to_active:
+                    score -= 200.0
+            # vs Dragapult: the same big-hand Refrain exploit (REAL LADDER LOSS ep 86501434 — their
+            # Lillie/Poké-Pad engine held 5-9 cards, so Refrain OHKOs the 320HP Dragapult ex at
+            # hand >=7). Steer fetch / placement / evolve-target / promote toward the Froslass line
+            # and keep the 3-prize Starmie off the ACTIVE (Phantom Dive 2HKOs it for 3 prizes).
+            # No-op outside the Dragapult matchup.
+            if _VS_DRAG:
                 to_active = (o.area == AreaType.ACTIVE)
                 if cid in FROSLASS_LINE:
                     score += 220.0 if to_active else 90.0
