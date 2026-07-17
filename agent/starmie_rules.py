@@ -22,6 +22,8 @@ no other deck (Crustle, Dragapult, …) ever routes through here — the generic
 """
 from __future__ import annotations
 
+import os
+import sys
 from collections import Counter
 
 from cg.api import (
@@ -157,6 +159,36 @@ def _energy_count(pk) -> int:
             return 0
 
 
+def _deck_csv_is_starmie() -> bool:
+    """True iff the shipped deck.csv IS this module's 60-card list. Resolved once at import; used
+    ONLY for pre-board frames (the IS_FIRST toss fires before a single card is visible, so the
+    signature scan below cannot). On Kaggle deck.csv is ground truth (the ship script copies the
+    Starmie list in); defensively False on any read problem."""
+    cands = []
+    try:
+        if "__file__" in globals():
+            cands.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "deck.csv"))
+    except Exception:
+        pass
+    cands += ["deck.csv", "/kaggle_simulations/agent/deck.csv"]
+    try:
+        cands += [os.path.join(p, "deck.csv") for p in sys.path if p]
+    except Exception:
+        pass
+    for p in cands:
+        try:
+            if os.path.exists(p):
+                with open(p) as f:
+                    ids = sorted(int(x) for x in f.read().splitlines() if x.strip())
+                return ids == sorted(STARMIE_DECK)
+        except Exception:
+            return False
+    return False
+
+
+_DECK_CSV_IS_STARMIE = _deck_csv_is_starmie()
+
+
 def is_starmie_deck(state, me_i: int) -> bool:
     """True iff our side is piloting the Starmie/Froslass line (one of its mons is visible)."""
     try:
@@ -173,6 +205,14 @@ def is_starmie_deck(state, me_i: int) -> bool:
         for c in (me.discard or []):
             if _id(c) in _SIGNATURE:
                 return True
+        # Pre-board frame (IS_FIRST toss: no hand dealt, nothing in play — the signature scan above
+        # can never fire): trust the shipped deck.csv. Without this, the generic scorer answers the
+        # toss and DECLINES going first, while the elite Starmie pilots take it 254:29 — a 1-energy
+        # aggro deck wants the extra setup turn. Strictly limited to the all-zones-empty frame, so
+        # every visible-board decision still goes through the signature gate.
+        if (_DECK_CSV_IS_STARMIE and not (me.active or []) and not (me.bench or [])
+                and not (me.hand or []) and not (me.discard or [])):
+            return True
     except Exception:
         return False
     return False
@@ -447,6 +487,54 @@ def vs_crustle() -> bool:
     return _VS_CRU
 
 
+# ── opponent-archetype gating: Marnie's Grimmsnarl ex (Tea Party) matchup ────────────────────────
+# The July-2026 upper board is dominated by Marnie's Grimmsnarl ex (the top-3 teams all pilot it).
+# Its plan: Shadow Bullet (180 + 30 bench snipe) from a 320HP Stage-2 ex, Munkidori's Adrena-Brain
+# moving 3 damage counters per copy per turn (heals their attacker AND finishes our chipped mons),
+# and a huge draw engine that keeps their hand at 7-11 cards. Three exploitable facts (verified by
+# game traces vs our own elite-calibrated Grimmsnarl agent):
+#   1. Their hand size makes Mega Froslass's Resentful Refrain (50 x opp hand, cost {W}) a repeated
+#      ONE-ENERGY OHKO on the 320HP Grimmsnarl (hand 7+ -> 350+; with Gravity Mountain in play their
+#      Stage-2 drops to 290 -> hand 6 suffices).  So we race with the Froslass line front and center.
+#   2. Their max single-turn damage on our active is 180 (+<=90 via Adrena-Brain) — a full-HP Mega
+#      (310/330) can NEVER be KO'd in one turn, so the Wally heal-loop walls them out completely
+#      while Refrain keeps firing (Wally, re-attach one {W}, attack — all in the same turn).
+#   3. Gravity Mountain is a double blow here: it evicts their Spikemuth Gym (a fetch engine they
+#      use nearly every turn) AND takes Grimmsnarl to 290.
+# Also: every spare 70HP basic we bench is a free prize for Shadow Bullet's snipe + Adrena chip, so
+# we cap bench development at 2. All branches are strict no-ops while `_VS_GRIM` is False; the
+# Marnie line ids (646/647/648) appear ONLY in the Grimmsnarl lists, so detection is zero-false-
+# positive and every other matchup (and the mirror) stays byte-identical.
+_GRIMM_LINE = {646, 647, 648}   # Marnie's Impidimp / Morgrem / Grimmsnarl ex
+_VS_GRIM = False  # set each frame by note_obs(); latched True once the Marnie line is seen this game
+
+
+def _vs_grimmsnarl(obs, me_i) -> bool:
+    """True iff the opponent is piloting Marnie's Grimmsnarl ex. A single sighting of the (list-
+    unique) Marnie line on the opponent's board / pre-evolutions / discard is a zero-false-positive
+    tell; reads only opponent-revealed info, like agent/opp_detect.detect_opp."""
+    try:
+        op = obs.current.players[1 - me_i]
+        for pk in (list(op.active or []) + list(op.bench or [])):
+            if pk is None:
+                continue
+            if _id(pk) in _GRIMM_LINE:
+                return True
+            for c in (getattr(pk, "preEvolution", None) or []):
+                if _id(c) in _GRIMM_LINE:
+                    return True
+        for c in (op.discard or []):
+            if _id(c) in _GRIMM_LINE:
+                return True
+    except Exception:
+        return False
+    return False
+
+
+def vs_grimmsnarl() -> bool:
+    return _VS_GRIM
+
+
 # ── prize-tracker integration (the deck's edge) ────────────────────────────────────────────────
 try:
     from prize_tracker import PrizeTracker
@@ -516,7 +604,7 @@ def opp_is_lightning() -> bool:
 
 def note_obs(obs, obs_dict, me_i) -> None:
     """Update the per-game prize tracker + the Lightning/Dragapult opponent flags. Called every frame."""
-    global _TRACKER, _LAST_PRIZE, _OPP_LIGHTNING, _VS_DRAG, _VS_LUC, _VS_CRU
+    global _TRACKER, _LAST_PRIZE, _OPP_LIGHTNING, _VS_DRAG, _VS_LUC, _VS_CRU, _VS_GRIM
     try:
         _VS_DRAG = _vs_dragapult(obs, me_i)
     except Exception:
@@ -530,6 +618,7 @@ def note_obs(obs, obs_dict, me_i) -> None:
             _OPP_LIGHTNING = False        # fresh game -> re-detect the matchup from scratch
             _VS_LUC = False
             _VS_CRU = False
+            _VS_GRIM = False
         _LAST_PRIZE = pc
         if _TRACKER is not None:
             _TRACKER.update(obs, obs_dict)
@@ -539,6 +628,8 @@ def note_obs(obs, obs_dict, me_i) -> None:
             _VS_LUC = True                # latch: stays set for the rest of this game
         if not _VS_CRU and _vs_crustle(obs, me_i):
             _VS_CRU = True                # latch: stays set for the rest of this game
+        if not _VS_GRIM and _vs_grimmsnarl(obs, me_i):
+            _VS_GRIM = True               # latch: stays set for the rest of this game
     except Exception:
         pass
 
@@ -678,10 +769,17 @@ def score_main(obs, o, me_i) -> float:
         if cid == BUDDY_POFFIN:            # both basics are 70HP -> the whole line; vital when thin
             if not _basic_available_in_deck(state, me_i):
                 return -1.0
+            # vs Grimmsnarl every spare 70HP basic is a free prize (Shadow Bullet's 30 snipe +
+            # Adrena-Brain chip kill it at leisure) — one backup body per line is plenty.
+            if _VS_GRIM and bench_n >= 2:
+                return 250.0
             if bench_n <= 1:
                 return 1780.0
-            if bench_n <= 3:
+            if bench_n <= 2:
                 return 1650.0
+            # elite pilots play Poffin at bench 0-2 in 90% of cases (426/471) — cheap late, not free
+            if bench_n <= 3:
+                return 1450.0
             return 250.0
         if cid == ENERGY_SEARCH:           # item: tutor a Basic Energy
             if _deck_available(state, me_i, BASIC_WATER) <= 0:
@@ -707,10 +805,29 @@ def score_main(obs, o, me_i) -> float:
             if (_anti_lightning() and _id(active) == MEGA_STARMIE
                     and any(_id(b) == MEGA_FROSLASS for b in _my_bench(state, me_i))):
                 return 1455.0
+            # vs Crustle: a Froslass-line active can NEVER damage the wall (all its attacks are
+            # ex-negated) — swap it out for the benched Starmie line, whose Nebula Beam pierces.
+            if (_VS_CRU and _id(active) in FROSLASS_LINE
+                    and any(_id(b) in STARMIE_LINE for b in _my_bench(state, me_i))):
+                return 1455.0
+            # vs Grimmsnarl: their draw engine holds 7-11 cards, so Mega Froslass's Resentful
+            # Refrain (50 x their hand, one {W}) repeatedly OHKOs the 320HP Grimmsnarl — promote the
+            # Froslass line over a Starmie active (and its 3-prize body leaves the firing line).
+            if (_VS_GRIM and _id(active) == MEGA_STARMIE
+                    and any(_id(b) == MEGA_FROSLASS for b in _my_bench(state, me_i))):
+                return 1455.0
             return -1.0                    # generic Switches pointlessly (de-fuels its own attacker)
-        if cid == WALLY_COMP:              # heal a Mega BUT strip its Energy -> usually a tempo trap
+        if cid == WALLY_COMP:              # heal a Mega BUT strip its Energy -> the deck's core loop
             if sup_done:
                 return -1.0
+            # ELITE-CALIBRATED (525 winners-only games, tomatomato et al.): Wally is played as the
+            # FIRST action of the turn (mean normalized position 0.026, n=311) in EVERY matchup —
+            # 77% of the frames where the active Mega had soaked >=100 damage. The loop: Wally full
+            # heal, re-attach one {W} (energy goes to HAND, not discard), fire the 1-energy attack
+            # (Jetting Blow / Resentful Refrain) the same turn. Nothing in this field OHKOs a
+            # full-HP Mega, so a held Wally means the opponent banks no prizes off our active.
+            if _wally_reset_generic(state, me_i):
+                return 1860.0
             # vs Dragapult: Phantom Dive hits our Active for 200 but neither Mega (310/330HP) dies to
             # one — the KO comes from the FOLLOW-UP hit + spread. Wally fully heals (erases the 200 and
             # any spread counters) and the energy it strips is trivially re-attached for our 1-energy
@@ -736,12 +853,22 @@ def score_main(obs, o, me_i) -> float:
         if cid == GRAVITY_MOUNTAIN:        # our Megas are Stage-1 (immune); only chips opp Stage-2s
             if stad_done:
                 return -1.0
+            # vs Grimmsnarl this stadium is a double blow: it evicts their Spikemuth Gym (the fetch
+            # engine they tap nearly every turn) AND their Stage-2 Grimmsnarl ex drops 320 -> 290,
+            # putting it in range of Refrain at hand 6 / Nebula+Jetting. Play it before attacking.
+            if _VS_GRIM:
+                return 1640.0
             return 500.0
 
         # Bare basic Pokémon from hand: board presence.
         cd = _meta(cid)
         if cd is not None and cd.cardType == CardType.POKEMON and getattr(cd, "basic", False):
-            return 1700.0 if bench_n == 0 else 1300.0
+            if bench_n == 0:
+                return 1700.0
+            # vs Grimmsnarl: spare 70HP basics are free snipe/Adrena prizes — stop at 2 bench mons.
+            if _VS_GRIM and bench_n >= 2:
+                return 350.0
+            return 1300.0
         return 600.0
 
     if t == OptionType.EVOLVE:
@@ -756,6 +883,10 @@ def score_main(obs, o, me_i) -> float:
             ev = _id(_get(obs, AreaType.HAND, o.index, me_i))
             if ev == MEGA_STARMIE:
                 return 1380.0        # the only attacker (Nebula Beam) that pierces the ex-damage wall
+        if _VS_GRIM:
+            ev = _id(_get(obs, AreaType.HAND, o.index, me_i))
+            if ev == MEGA_FROSLASS:
+                return 1360.0        # Refrain (50 x their 7-11 hand) is the repeated OHKO here
         return 1300.0
 
     if t == OptionType.ATTACH:
@@ -766,6 +897,10 @@ def score_main(obs, o, me_i) -> float:
                 # pierces the ex-damage-prevention wall) comes online a turn earlier.
                 if _VS_CRU and _id(active) == MEGA_STARMIE and _energy_count(active) < 3:
                     return 1320.0
+                # vs Crustle a Froslass active can never damage the wall — its fuel is wasted; feed
+                # the benched Starmie line (1180/1080 below) first instead.
+                if _VS_CRU and _id(active) == MEGA_FROSLASS:
+                    return 900.0
                 # vs Lightning: prefer landing the single Legacy Energy on the active Froslass tank.
                 # Legacy makes its holder's KO yield 1 fewer prize (once/game), shaving the inevitable
                 # Froslass death from 3 prizes to 2 in a race we lose by ~2. It stays in ATTACK_ENERGY
@@ -773,6 +908,12 @@ def score_main(obs, o, me_i) -> float:
                 if (_anti_lightning() and _id(active) == MEGA_FROSLASS
                         and _id(_get(obs, AreaType.HAND, o.index, me_i)) == LEGACY_ENERGY):
                     return 1300.0
+                # ELITE: Legacy Energy is attached liberally to the Megas (127+94 of 221 Legacy
+                # attaches) — on the active it shaves our 3-prize giveaway to 2 while still paying
+                # {W}/{C} costs. Prefer it over a plain Water when the active still needs fuel.
+                if (_id(_get(obs, AreaType.HAND, o.index, me_i)) == LEGACY_ENERGY
+                        and _energy_count(active) < 3):
+                    return 1260.0
                 return 1250.0 if _energy_count(active) < 3 else 1000.0
             if _id(active) in BASICS:
                 # Energy carries through evolution: fuel a Staryu that will become the Nebula attacker.
@@ -802,8 +943,14 @@ def score_main(obs, o, me_i) -> float:
         # last prize), which there is never a reason to defer: take it immediately.
         active = _my_active(state, me_i)
         oa = _opp_active(state, me_i)
+        # An ex-negated attack into the Crustle wall deals 0 real damage — never score its phantom
+        # damage or (worse) treat it as a game-winning KO.
+        negated = (_VS_CRU and _id(oa) == 345
+                   and o.attackId in (JETTING_BLOW, ABSOLUTE_SNOW, RESENTFUL_REFRAIN))
         score = 100.0
         dmg = _eff_damage(active, o.attackId, oa, state.players[1 - me_i])
+        if negated:
+            dmg = 0
         score += min(max(dmg, 0), 300) * 0.2
         if oa is not None and dmg > 0 and dmg >= (oa.hp or 0):
             score += 160.0  # KO
@@ -821,12 +968,19 @@ def score_main(obs, o, me_i) -> float:
                 score += 20.0  # effect-ignoring: robust vs damage-prevention walls / big ex
         if _VS_CRU:
             # Crustle negates all damage from our ex/Mega-ex attacks; only Nebula Beam (effect-ignoring)
-            # actually lands. Rank it well above the negated Jetting Blow / Froslass attacks so we punch
-            # through the wall instead of whiffing. (Strict no-op outside the Crustle matchup.)
+            # actually lands. When their ACTIVE is the wall itself, zero out the phantom damage score of
+            # the negated attacks (Refrain's 300+ "damage" was outranking Jetting, whose 50 bench-snipe
+            # at least lands on a benched Dwebble) and rank: Nebula >> Jetting (snipe) > Snow (its Sleep
+            # effect still applies through the damage-prevention) > Refrain > END. Against a Dwebble
+            # active there is no wall, so the normal damage scoring stands. (No-op outside the matchup.)
             if o.attackId == NEBULA_BEAM:
                 score += 300.0
-            elif o.attackId in (JETTING_BLOW, ABSOLUTE_SNOW, RESENTFUL_REFRAIN):
-                score -= 60.0  # negated vs the wall (kept >= END so the Jetting 50 bench-snipe still fires)
+            elif negated and o.attackId == JETTING_BLOW:
+                score = 114.0   # its 50 bench-snipe still lands on a benched Dwebble
+            elif negated and o.attackId == ABSOLUTE_SNOW:
+                score = 106.0   # its Sleep effect still applies through the damage-prevention
+            elif negated:
+                score = 102.0   # Refrain: fully dead vs the wall, kept just above END
         if _opp_is_aboma(state, me_i):
             # Vs the slow Abomasnow tank our loss mode is durdling: the generic ordering keeps
             # playing marginal cards (a redundant search once a Mega is already set, Gravity
@@ -847,6 +1001,16 @@ def score_main(obs, o, me_i) -> float:
         # vs Lightning, if no Switch is in hand, retreat the Lightning-weak Mega Starmie out for a
         # benched Mega Froslass so we don't hand over a 3-prize OHKO.
         if (_anti_lightning() and _id(active) == MEGA_STARMIE
+                and any(_id(b) == MEGA_FROSLASS for b in _my_bench(state, me_i))):
+            return 110.0
+        # vs Crustle: a Froslass-line active can never damage the wall — retreat it for the benched
+        # Starmie line (Nebula Beam) when no Switch is in hand.
+        if (_VS_CRU and _id(active) in FROSLASS_LINE
+                and any(_id(b) in STARMIE_LINE for b in _my_bench(state, me_i))):
+            return 110.0
+        # vs Grimmsnarl: front the Froslass line — Refrain (50 x their 7-11 hand) is the repeated
+        # OHKO on the 320HP Grimmsnarl, and it re-arms for one {W} after every Wally reset.
+        if (_VS_GRIM and _id(active) == MEGA_STARMIE
                 and any(_id(b) == MEGA_FROSLASS for b in _my_bench(state, me_i))):
             return 110.0
         return -1.0
@@ -934,6 +1098,40 @@ def _wally_worth_it(state, me_i) -> bool:
     return have_energy
 
 
+def _wally_reset_generic(state, me_i) -> bool:
+    """ELITE-CALIBRATED generic Wally heal-loop (525 winners-only elite games): the pilots play
+    Wally as the FIRST action of the turn in EVERY matchup once the active Mega has soaked a real
+    hit (their damage-at-play distribution: 100+:87% of 311 plays, median ~150-200), provided the
+    1-energy attack can be re-armed from hand the same turn. Nothing in this field OHKOs a full-HP
+    Mega (310/330), so a held Wally + one energy means the opponent banks no prizes off our active.
+
+    One carve-out: vs the Crustle wall a Mega Starmie carrying its {C}{C}{C} Nebula charge only
+    resets at >=240 soaked (the wall chips just 120/turn, and stripping the charge stalls our only
+    piercing attack for ~3 turns unless an Ignition Energy is in hand)."""
+    active = _my_active(state, me_i)
+    if _id(active) not in MEGAS:
+        return False
+    hp = active.hp or 0
+    maxhp = getattr(active, "maxHp", 0) or 0
+    if maxhp <= 0:
+        return False
+    soaked = maxhp - hp
+    if soaked < 140.0:
+        return False
+    try:
+        hand = state.players[me_i].hand or []
+        have_energy = any(_id(c) in ATTACK_ENERGY for c in hand)
+    except Exception:
+        return False
+    if not have_energy:
+        return False
+    if _VS_CRU and _id(active) == MEGA_STARMIE and _energy_count(active) >= 2:
+        have_ignition = any(_id(c) == IGNITION_ENERGY for c in hand)
+        if soaked < 240.0 and not have_ignition:
+            return False
+    return True
+
+
 def _wally_reset_vs_lucario(state, me_i) -> bool:
     """Vs Lucario: our active is a Mega that has soaked a real Fighting hit (>= _LUC_WALLY_DMG) and we
     can re-power its 1-energy {W} attack from hand. Wally fully heals it; since Aura Jab is only 130 a
@@ -1018,6 +1216,10 @@ def score_sub(obs, o, me_i, context) -> float:
                 score += _opponent_value(card)
                 if o.area == AreaType.ACTIVE:
                     score += 250.0
+                # ELITE: Jetting Blow's 50 bench-snipe takes an hp<=50 KO whenever one is on the
+                # board (436 of 1,005 real snipe choices) — a banked prize beats chipping a big ex.
+                if o.area == AreaType.BENCH and 0 < (getattr(card, "hp", 0) or 0) <= 50:
+                    score += 350.0
             elif isinstance(card, Pokemon):
                 score -= _opponent_value(card)
             return score
@@ -1044,14 +1246,16 @@ def score_sub(obs, o, me_i, context) -> float:
             # Our own mon (setup, evolve, fetch, switch-in).
             if cid in MEGAS:
                 score += 320.0     # a Mega attacker is the best fetch/placement
-                # Froslass's Resentful Refrain costs only {W} (online turn 2, fast clock), vs
-                # Starmie's Nebula Beam {C}{C}{C} (turn 4). Bias the line toward Froslass so we
-                # win the prize race with the cheaper attacker (+2pt mirror win-rate, 5000 games).
-                if cid == MEGA_FROSLASS:
+                # ELITE-CALIBRATED line bias: the winners-only pilots lead Staryu (326:199 setups)
+                # and keep Mega Starmie fronted in every archetype but Lucario (Starmie 64% of
+                # active-Mega frames; Salvatore fetches 270:196 Starmie) — its 330HP body and the
+                # Jetting Blow snipe out-race Froslass's cheaper but weaker Refrain by default.
+                # (Replaces the old Froslass bias; matchup gates below still override per-opponent.)
+                if cid == MEGA_STARMIE:
                     score += 40.0 if o.area == AreaType.ACTIVE else 20.0
             elif cid in BASICS:
                 score += 180.0
-                if cid == SNORUNT:
+                if cid == STARYU:
                     score += 40.0 if o.area == AreaType.ACTIVE else 20.0
                 if len(_my_bench(state, me_i)) == 0:
                     score += 220.0  # empty bench -> a body is urgent
@@ -1076,6 +1280,16 @@ def score_sub(obs, o, me_i, context) -> float:
                     score += 220.0 if to_active else 90.0
                 elif cid in FROSLASS_LINE and to_active:
                     score -= 200.0
+            # vs Grimmsnarl: the Froslass line fronts — Resentful Refrain (50 x their 7-11 card
+            # hand, one {W}) repeatedly OHKOs the 320HP Grimmsnarl, and re-arms instantly after
+            # every Wally reset. Steer fetch / placement / evolve-target / promote toward Froslass
+            # and keep the 3-prize Starmie off the ACTIVE. No-op outside the Grimmsnarl matchup.
+            if _VS_GRIM:
+                to_active = (o.area == AreaType.ACTIVE)
+                if cid in FROSLASS_LINE:
+                    score += 220.0 if to_active else 90.0
+                elif cid in STARMIE_LINE and to_active:
+                    score -= 200.0
             if context in PLACEMENT_CTX:
                 score += 400.0
             return score
@@ -1087,6 +1301,10 @@ def score_sub(obs, o, me_i, context) -> float:
             need_energy = active is not None and _id(active) in (MEGAS | BASICS) and _energy_count(active) < 3
             if cid in ATTACK_ENERGY:
                 score += 120.0 if need_energy else 40.0
+                # ELITE: Legacy is the pilots' top Hilda energy pick (75 of 233 'other'-matchup
+                # picks) — on a Mega it shaves the 3-prize KO to 2 while still paying any cost.
+                if cid == LEGACY_ENERGY:
+                    score += 50.0
                 # vs Crustle, Ignition Energy provides {C}{C}{C} on an Evolution in one attach -> it
                 # brings Mega Starmie's wall-piercing Nebula Beam online a full turn early.
                 if _VS_CRU and cid == IGNITION_ENERGY:
