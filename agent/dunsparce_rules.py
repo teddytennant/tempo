@@ -96,9 +96,47 @@ GIVE_UP_CTX = {
 HEAL_CTX = {SelectContext.HEAL, SelectContext.REMOVE_DAMAGE_COUNTER}
 
 # This combo deck must assemble a Stage-2 line (Abra -> Kadabra -> Alakazam) before it can do
-# anything, so the extra setup tempo of the first turn outweighs going second's one card. Going
-# first measured clearly better in self-play (≈63% vs ≈57% over 120/160 games). So: go first.
+# anything, so the extra setup tempo of the first turn outweighs going second's one card. Elite
+# corpus (4,081 winners-only Alakazam games, 12 teams incl. TrustHub, this list's source): IS_FIRST
+# answered YES 2,125 / 2,125 — every elite Alakazam pilot always goes first. So: go first.
 _GO_FIRST = True
+
+# Elite calibration constants (data/bc_top mining, winners-only, n=4,081 games):
+#   swing-hand median 15 (TrustHub 19); 20 x 17 = 340 OHKOs every meta attacker (320HP max), so
+#   cards past _FAT_HAND are damage overkill — elites keep BUILDING (bench 4-5 wide, Battle Cage,
+#   spare energy banked) instead of hoarding. Run Away Draw usage collapses at deck <= 3 (26%).
+_FAT_HAND = 18            # hand size beyond which held cards stop being worth +20 each
+_RAD_DECK_FLOOR = 4       # don't Run-Away-Draw below this deckCount (deck-out governor)
+_ASH_DECK_URGENT = 12     # Sacred Ash becomes top priority at/below this deckCount
+
+
+def _deck_csv_is_ours() -> bool:
+    """True iff the deck this PROCESS pilots (the packed agent/deck.csv, or the TEMPO_AZ_DECK env
+    override for local evals) is exactly this 60. IS_FIRST is asked before any card is dealt, so
+    no visible-signature gate can ever fire there — this out-of-band check is the only way to give
+    the elite-unanimous "go first" answer. On Kaggle deck.csv IS the piloting deck (main.py returns
+    it as the deck selection), so the flag is exact where it matters."""
+    import os as _os
+    try:
+        path = _os.environ.get("TEMPO_AZ_DECK")
+        cands = [path] if path else []
+        try:
+            here = _os.path.dirname(_os.path.abspath(__file__))
+            cands.append(_os.path.join(here, "deck.csv"))
+        except Exception:
+            pass
+        cands += ["deck.csv", "/kaggle_simulations/agent/deck.csv"]
+        for p in cands:
+            if p and _os.path.exists(p):
+                with open(p) as f:
+                    ids = sorted(int(x) for x in f.read().splitlines() if x.strip())
+                return ids == sorted(DUNSPARCE_DECK)
+    except Exception:
+        return False
+    return False
+
+
+_DECK_FLAG = _deck_csv_is_ours()
 
 # ── engine tables (loaded once) ────────────────────────────────────────────────────────────────
 try:
@@ -175,28 +213,32 @@ def _p_energy_count(p) -> int:
         return 0
 
 
-# Dragapult ex spread/aggro line (Dreepy -> Drakloak -> Dragapult ex). Phantom Dive deals 200 to our
-# Active AND spreads 6 damage counters (60) onto our bench, picking off the fragile Abra (50HP) /
-# Dunsparce (70HP) pieces before we can assemble + promote Alakazam. We adapt against this.
+# Bench-spread aggro lines whose attacks chip/snipe our fragile bench (Abra 50HP / Dunsparce 70HP)
+# before we can assemble + promote Alakazam:
+#   Dragapult ex (Dreepy 119 -> Drakloak 120 -> Dragapult ex 121): Phantom Dive, 200 + 6 counters
+#   spread onto the bench.  Grimmsnarl ex (Impidimp 646 -> Morgrem 647 -> Grimmsnarl ex 648, the
+#   Tea Party meta deck): Shadow Bullet, 180 + 6 damage counters onto one benched mon.
+# Both place damage COUNTERS on the bench — exactly what our Battle Cage stadium nullifies.
 DRAGAPULT_LINE = {119, 120, 121}
+SPREAD_LINES = {119, 120, 121, 646, 647, 648}
 
 
 def _facing_spread(state, me_i: int) -> bool:
-    """True when the opponent is a bench-spread aggro deck (Dragapult), detected from its revealed
-    board/discard. Gated inside the dunsparce specialist, and keyed only on the Dragapult line, so it
-    can never alter how we pilot any other deck or how the deck plays against any other opponent."""
+    """True when the opponent is a bench-spread aggro deck (Dragapult / Grimmsnarl), detected from
+    its revealed board/discard. Gated inside the dunsparce specialist, and keyed only on those two
+    lines, so it can never alter how we pilot any other deck."""
     try:
         opp = state.players[1 - me_i]
         for p in (list(opp.active or []) + list(opp.bench or [])):
             if p is None:
                 continue
-            if _id(p) in DRAGAPULT_LINE:
+            if _id(p) in SPREAD_LINES:
                 return True
             for c in (getattr(p, "preEvolution", None) or []):
-                if _id(c) in DRAGAPULT_LINE:
+                if _id(c) in SPREAD_LINES:
                     return True
         for c in (opp.discard or []):
-            if _id(c) in DRAGAPULT_LINE:
+            if _id(c) in SPREAD_LINES:
                 return True
     except Exception:
         return False
@@ -204,7 +246,12 @@ def _facing_spread(state, me_i: int) -> bool:
 
 
 def is_dunsparce_deck(state, me_i: int) -> bool:
-    """True iff our side is piloting the Alakazam / Dudunsparce line (one of its mons is visible)."""
+    """True iff our side is piloting the Alakazam / Dudunsparce line (one of its mons is visible).
+
+    Pre-deal exception: at IS_FIRST/MULLIGAN time NOTHING is visible yet (hand undealt — verified in
+    both the local engine and real Kaggle records), so when the packed deck.csv is exactly this list
+    we also fire during that empty-board phase; it only ever decides the go-first answer. The deck's
+    only Basics are Abra/Dunsparce, so from setup onward the visible-signature gate always works."""
     try:
         me = state.players[me_i]
         for p in (me.active or []):
@@ -218,6 +265,14 @@ def is_dunsparce_deck(state, me_i: int) -> bool:
                 return True
         for c in (me.discard or []):
             if _id(c) in _SIGNATURE:
+                return True
+        if _DECK_FLAG:
+            # pre-deal phase only: no cards anywhere on either side, nothing committed yet.
+            opp = state.players[1 - me_i]
+            if (not (me.active or []) and not (me.bench or []) and not (me.hand or [])
+                    and not (me.discard or []) and int(getattr(me, "handCount", 0) or 0) == 0
+                    and not (opp.active or []) and not (opp.bench or [])
+                    and int(getattr(opp, "handCount", 0) or 0) == 0):
                 return True
     except Exception:
         return False
@@ -410,6 +465,31 @@ def score_main(obs, o, me_i) -> float:
     if t == OptionType.ABILITY:
         # Run Away Draw (+3, recycles) / Psychic Draw (on evolve): pure, repeatable card advantage —
         # this engine is the deck. Fire it before committing or attacking; it GROWS Powerful Hand.
+        # Three governors (all traced/elite-mined):
+        #   1) SUICIDE GUARD: Run Away Draw shuffles Dudunsparce ITSELF back into the deck. If it is
+        #      our Active with an empty bench, using it leaves us with zero Pokémon in play — an
+        #      instant loss (a traced game was thrown exactly this way while ahead on prizes).
+        #   2) DECK-OUT FLOOR: elite usage collapses at deckCount <= 3 (26% vs ~50-76% otherwise);
+        #      RAD nets deck -2, so firing it at <= 3 sets up the fatal empty-deck turn-start draw.
+        #   3) FAT-HAND THROTTLE: at hand >= _FAT_HAND the swing already OHKOs everything in the
+        #      meta (20 x 17 = 340 > 320HP max); when the deck is also shrinking, more draw is pure
+        #      self-mill (this was the 6-deckout-losses-in-40 leak vs the Crustle stall wall).
+        if o.area == AreaType.STADIUM:
+            # An opponent's stadium ability (e.g. Spikemuth Gym, traced): unknown effect/cost and
+            # nothing in OUR deck benefits (Battle Cage is passive) — never activate it.
+            return -1.0
+        src = _get(obs, o.area, o.index, me_i)
+        if _id(src) == DUDUNSPARCE:
+            try:
+                deck_n = int(state.players[me_i].deckCount or 0)
+            except Exception:
+                deck_n = 60
+            if o.area == AreaType.ACTIVE and len(_my_bench(state, me_i)) == 0:
+                return -1.0
+            if deck_n < _RAD_DECK_FLOOR:
+                return -1.0
+            if deck_n <= 20 and _hand_size(state, me_i) >= _FAT_HAND:
+                return -1.0
         return 2280.0
 
     if t == OptionType.PLAY:
@@ -422,7 +502,12 @@ def score_main(obs, o, me_i) -> float:
         spread = _facing_spread(state, me_i)
         # Once an energised Alakazam exists (Active or benched), preserve the hand for Powerful Hand:
         # truly HOLD hand-shrinking cards (score below END) so the imminent swing stays maximal.
-        hold = swing or _swing_mode(state, me_i)
+        # ADAPTIVE: past _FAT_HAND cards the swing already OHKOs everything (20 x 17 = 340 > any meta
+        # HP), so further hoarding is worthless — elites bench 4-5 wide and keep building instead
+        # (median swing hand 15). Lifting the hold at a fat hand converts overkill damage into board
+        # resilience, which is exactly what the spread matchups (Dragapult/Grimmsnarl) punish.
+        hand_n = _hand_size(state, me_i)
+        hold = (swing or _swing_mode(state, me_i)) and hand_n < _FAT_HAND
 
         # Rare Candy: Abra -> Alakazam, skipping Kadabra. Treat like the best evolve when an Abra is in
         # play and an Alakazam is in hand to land it on; otherwise it has no target -> don't waste it.
@@ -463,8 +548,9 @@ def score_main(obs, o, me_i) -> float:
         # Energy from hand is handled under ATTACH; PLAY of a Pokémon develops the board.
         if _is_basic_pokemon(cid):
             # Bench bodies feed the draw engine (Dunsparce) and the evolution line (Abra). Develop
-            # early; but once an energised Alakazam is online a new body just costs a Powerful-Hand
-            # card, so hold it unless the bench is empty (we always need a body to fall back on).
+            # early and WIDE (elites keep 4-5 benched from ot3 on — bodies are prize buffer, engine
+            # fuel and the next attacker); once an energised Alakazam is online and the hand is still
+            # below _FAT_HAND, a new body costs a Powerful-Hand card, so keep only a minimal backstop.
             if hold:
                 # Keep the hand fat for Powerful Hand — but never run so thin that one Phantom Dive
                 # (200 to Active + bench spread) wipes our board and leaves nothing to promote. Vs
@@ -474,6 +560,8 @@ def score_main(obs, o, me_i) -> float:
                     return 1800.0
                 if spread and bench_n < 2 and cid == DUNSPARCE:
                     return 900.0   # a tanky 140HP-to-be backup, so a spread turn can't wipe us
+                if bench_n < 2:
+                    return 700.0   # always keep one spare body to promote/re-arm behind
                 return -1.0
             if bench_n <= 0:
                 return 1800.0
@@ -487,7 +575,7 @@ def score_main(obs, o, me_i) -> float:
                 abra_n = (1 if _id(active) == ABRA else 0) + sum(
                     1 for b in _my_bench(state, me_i) if _id(b) == ABRA)
                 return 1500.0 if abra_n < 2 else 250.0
-            if bench_n < 3:
+            if bench_n < 4:
                 return 1500.0
             return 500.0
 
@@ -533,13 +621,22 @@ def score_main(obs, o, me_i) -> float:
                 pass
             return 900.0 if has_special else 60.0
 
-        # Sacred Ash: anti-deckout recycling (matters very late) — and -1 hand.
+        # Sacred Ash: shuffle up to 5 Pokémon from discard back into the deck — the deck-out rescue
+        # (+5 deckCount) AND attacker recycling. Elites play it at deckCount ~0-15 (median ~10), not
+        # at the last moment; make it TOP priority once the deck runs low, overriding hand-holding
+        # (deck-out loses outright; 20 damage does not).
         if cid == SACRED_ASH:
             try:
-                if (state.players[me_i].deckCount or 0) <= 6:
-                    return 700.0   # imminent deck-out overrides hand preservation
+                deck_n = int(state.players[me_i].deckCount or 0)
             except Exception:
-                pass
+                deck_n = 60
+            try:
+                pok_in_discard = sum(1 for c in (state.players[me_i].discard or [])
+                                     if _id(c) in _SIGNATURE)
+            except Exception:
+                pok_in_discard = 0
+            if deck_n <= _ASH_DECK_URGENT and pok_in_discard >= 1:
+                return 2150.0
             if hold:
                 return -1.0
             return 80.0
@@ -549,40 +646,41 @@ def score_main(obs, o, me_i) -> float:
         # on us is the 200 to the Active, so our benched Alakazam line survives to promote and swing.
         # Powerful Hand hits the opponent's ACTIVE (counters there are unaffected), so it costs us
         # nothing on offense. Prioritise getting it down early under spread pressure.
+        # Elite pilots play it in ~46% of games (i.e. essentially whenever drawn), evenly across all
+        # turns and against every archetype — the permanent bench shield for the 50HP Abras beats one
+        # held card. Under spread pressure it outranks even the digs.
         if cid == BATTLE_CAGE:
             if stad_done:
                 return -1.0
+            if spread:
+                return 1600.0   # under spread, the bench shield comes down before everything mid-tier
             if hold:
                 return -1.0   # don't shrink the hand right before the swing
-            if spread:
-                return 1450.0   # under spread, get the bench shield down (just below the net-0 digs)
-            return 400.0
+            return 1450.0
 
         return 500.0
 
     if t == OptionType.ATTACH:
+        # Elite attach discipline (22,809 mined attaches): ~5.6 per game, ALWAYS onto a mon with
+        # zero {P} attached — never a second energy on an already-paid body. They pre-fuel the whole
+        # line (Abra 5.6k, Kadabra 3.5k attaches) so every future Alakazam swings the turn it is
+        # promoted, and bank the odd energy on Dunsparce/Dudunsparce. A double-attach is a wasted
+        # Powerful-Hand card AND a wasted turn-attach — score it below END.
         active = _my_active(state, me_i)
         card = _get(obs, o.area, o.index, me_i)
         is_p = _id(card) in P_ENERGY
-        if o.inPlayArea == AreaType.ACTIVE:
-            if _id(active) == ALAKAZAM:
-                # Need exactly one {P}. Once it's paid, an extra energy is a wasted Powerful-Hand card.
-                if _p_energy_count(active) < ALAKAZAM_ENERGY_GOAL:
-                    return 1700.0 if is_p else 200.0   # only a {P} energy actually powers the attack
-                return 20.0
-            if _id(active) in ALAKAZAM_LINE:
-                return 1500.0 if is_p else 300.0       # pre-fuel the soon-to-be Alakazam ({P} carries)
-            if _id(active) == DUDUNSPARCE:
-                return 900.0                           # Land Crush backup (rarely the plan)
-            return 600.0
-        if o.inPlayArea == AreaType.BENCH:
-            tgt = _get(obs, o.inPlayArea, o.inPlayIndex, me_i)
-            if _id(tgt) in ALAKAZAM_LINE:
-                if _p_energy_count(tgt) < ALAKAZAM_ENERGY_GOAL:
-                    return 1300.0 if is_p else 200.0
-                return 20.0
-            return 500.0
-        return 500.0
+        tgt = active if o.inPlayArea == AreaType.ACTIVE else _get(obs, o.inPlayArea, o.inPlayIndex, me_i)
+        if _id(tgt) in ALAKAZAM_LINE:
+            if _p_energy_count(tgt) >= ALAKAZAM_ENERGY_GOAL:
+                return -1.0
+            if _id(tgt) == ALAKAZAM:
+                return (1700.0 if o.inPlayArea == AreaType.ACTIVE else 1400.0) if is_p else 100.0
+            return (1500.0 if o.inPlayArea == AreaType.ACTIVE else 1300.0) if is_p else 200.0
+        if _id(tgt) in DRAW_ENGINE:
+            if _energy_count(tgt) >= 1:
+                return -1.0
+            return 400.0    # bank a spare (elites do: retreat fuel / Land Crush emergency)
+        return 300.0
 
     if t == OptionType.ATTACK:
         active = _my_active(state, me_i)
@@ -625,7 +723,17 @@ def score_sub(obs, o, me_i, context) -> float:
     score = 2000.0
 
     if t == OptionType.NUMBER:
-        return score + (getattr(o, "number", 0) or 0)   # take the bigger number (draw more, etc.)
+        n_num = getattr(o, "number", 0) or 0
+        if context == SelectContext.DRAW_COUNT:
+            # Deck-out governor: never optional-draw the deck below 2 cards (the mandatory turn-start
+            # draw from an empty deck is an instant loss; elites pick 0-1 draws at low deckCount).
+            try:
+                deck_n = int(state.players[me_i].deckCount or 0)
+            except Exception:
+                deck_n = 60
+            if deck_n - n_num < 2:
+                return score - 500.0 + n_num
+        return score + n_num   # otherwise take the bigger number (draw more, etc.)
 
     if t == OptionType.YES:
         if context == SelectContext.IS_FIRST:
@@ -660,10 +768,13 @@ def score_sub(obs, o, me_i, context) -> float:
                 score -= _opponent_value(card)
             return score
 
-        # Discard / pitch / give-up: dump spare basic energy first; protect the line + Rare Candy.
+        # Discard / pitch / give-up: elite pitch order (2,651 mined give-ups): Enhanced Hammer is the
+        # top pitch (dead vs most fields), then spare energy; protect the line + Rare Candy.
         if context in GIVE_UP_CTX:
             cd = _meta(cid)
             if cd is not None:
+                if cid == ENHANCED_HAMMER:
+                    return score + 80.0
                 if cid in BASIC_ENERGY:
                     return score + 60.0
                 if cid in KEY_PIECES or cd.cardType in (CardType.POKEMON, CardType.SUPPORTER):
@@ -681,19 +792,42 @@ def score_sub(obs, o, me_i, context) -> float:
                 if o.area == AreaType.ACTIVE:
                     score += 200.0
                 return score
-            # Our own mon (setup active, evolve, fetch, switch-in).
+            # Our own mon (setup active, evolve, fetch, switch-in). Elite fetch priorities: the
+            # Stage-2 attacker first, then the DRAW ENGINE (Dudunsparce is Poké Pad's #1 pick, 3,266
+            # of 10,187, when its Basic is down), then the rest; among Basics they fetch Dunsparce
+            # over Abra (Poffin 7,418 vs 5,063; Dawn Basic slot 2,960 vs 1,215) but LEAD with Abra
+            # (setup active 62% Abra vs 38% Dunsparce).
             if cid == ALAKAZAM:
                 score += 320.0     # the attacker is the best fetch / placement
             elif cid == KADABRA:
                 score += 200.0
             elif cid == ABRA:
                 score += 170.0
+                if context == SelectContext.SETUP_ACTIVE_POKEMON:
+                    score += 60.0   # elite opening active
                 if len(_my_bench(state, me_i)) == 0:
                     score += 200.0  # empty bench -> a body is urgent
+                # Line-bottleneck: with no Abra/Kadabra/Alakazam in play the whole attack line is
+                # dead no matter how many Alakazams sit in hand (traced dragapult loss: Alakazam +
+                # Rare Candy stranded in hand, all Abras KO'd). The Basic outranks everything then.
+                try:
+                    line_in_play = (_id(_my_active(state, me_i)) in ALAKAZAM_LINE) or any(
+                        _id(b) in ALAKAZAM_LINE for b in _my_bench(state, me_i))
+                except Exception:
+                    line_in_play = True
+                if not line_in_play:
+                    score += 220.0
             elif cid == DUDUNSPARCE:
                 score += 150.0     # the draw engine
+                try:
+                    dun_unev = (_id(_my_active(state, me_i)) == DUNSPARCE) or any(
+                        _id(b) == DUNSPARCE for b in _my_bench(state, me_i))
+                except Exception:
+                    dun_unev = False
+                if dun_unev:
+                    score += 90.0   # a Dunsparce in play is waiting for it -> engine online next turn
             elif cid == DUNSPARCE:
-                score += 130.0
+                score += 180.0
                 if len(_my_bench(state, me_i)) == 0:
                     score += 200.0
             if context in PLACEMENT_CTX:
