@@ -8,7 +8,7 @@ TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
 
 REPO="$(cd "$SRC/.." && pwd)"
 cp "$SRC/main.py" "$TMP/main.py"
-cp "$SRC/prize_tracker.py" "$SRC/belief.py" "$SRC/opp_detect.py" "$SRC/opp_decks.py" "$SRC/scorer.py" "$SRC/crustle_rules.py" "$SRC/lucario_rules.py" "$SRC/starmie_rules.py" "$SRC/cinderace_rules.py" "$SRC/dunsparce_rules.py" "$SRC/iono_rules.py" "$SRC/fezandipiti_rules.py" "$SRC/hops_snorlax_rules.py" "$SRC/lethal.py" "$TMP/" 2>/dev/null || true
+cp "$SRC/prize_tracker.py" "$SRC/belief.py" "$SRC/opp_detect.py" "$SRC/opp_decks.py" "$SRC/scorer.py" "$SRC/grimmsnarl_rules.py" "$SRC/crustle_rules.py" "$SRC/lucario_rules.py" "$SRC/starmie_rules.py" "$SRC/cinderace_rules.py" "$SRC/dunsparce_rules.py" "$SRC/iono_rules.py" "$SRC/fezandipiti_rules.py" "$SRC/hops_snorlax_rules.py" "$SRC/lethal.py" "$TMP/" 2>/dev/null || true
 # Guard against the deck.csv footgun: a specialist rules-file only activates when deck.csv matches
 # its signature, so shipping e.g. the 35x-water Abomasnow deck silently disables the Starmie pilot.
 # EXPECT_DECK (default: the Starmie list) is the canonical deck this build is meant to ship; abort on
