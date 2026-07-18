@@ -12,28 +12,10 @@ it barely attacks. These are exactly the card-id-gated rules the reference 1140-
 `score_sub` then produce a *self-consistent* score for every option (same scale as the reference
 bot), so best_options can rank the whole turn with this table instead of the generic one. For any
 other deck none of this fires (no 344/345 on board), so the generic path is untouched.
-
-v7 hardening (measured vs the public dashimaki mirror bot + the wall-breaker field):
-  - Go FIRST, not second: Superb Scissors is energy-gated (3 attachments), so the first player
-    reaches it a half-round earlier and stays a full hit ahead for the whole race. The mirror is
-    decided by that KO race (0 deck-outs across the baseline matrix), not by patience.
-  - Energy routing: Grow Grass provides {G} AND +20 HP -> stack it on the wall; Spiky reflects
-    20 onto every attacker that touches the active; Basic {G} guarantees the attack's {G} cost;
-    Mist is the last filler. Backup Crustles still get fuelled to 3 before the active is topped.
-  - Heal discipline: never burn a 70/80-point heal on chip damage smaller than the heal (the
-    heal budget IS the wall's effective HP), except in emergencies (active would die to the
-    opponent's best data-visible attack).
-  - Deck-race governors: Cheren/Poffin are optional deck burn. Stop them near the deck-out floor,
-    and in true stall states (our Crustle active blanks a non-piercing opponent ex) never draw
-    ourselves below the opponent's deck count — the deck-out war is won by whoever draws less.
-  - Promotion: after a KO, promote the most battle-ready backup (energy + tools), not the
-    biggest HP number.
 """
 from __future__ import annotations
 
-from cg.api import (
-    AreaType, CardType, EnergyType, OptionType, Pokemon, SelectContext, all_attack, all_card_data,
-)
+from cg.api import AreaType, CardType, OptionType, Pokemon, SelectContext, all_card_data
 
 # ── deck card IDs (verified present in data/decks/crustle.csv + engine card data) ─────────────
 DWEBBLE = 344
@@ -64,6 +46,20 @@ _SIGNATURE = {DWEBBLE, CRUSTLE}
 KEY_PIECES = {CRUSTLE, DWEBBLE, HEROS_CAPE}                       # never discard if avoidable
 USEFUL_PIECES = {JUMBO_ICE_CREAM, COOK, CHEREN, BUDDY_POFFIN, BATTLE_CAGE}
 
+# ── v8 ladder-loss additions (mined from refs 54794471 / 54181814 loss replays) ───────────────
+# Attackers whose attack damage scales with the damage counters on THEMSELVES (card data text
+# "damage counter[s] on this Pokémon"): Duraludon's Raging Hammer (80 + 10x) took 20 of our 93
+# mined ladder losses — our own non-lethal Superb Scissors chip was the fuel (80 -> 170-190/turn,
+# above our 150/turn heal ceiling; unfed it stays at 80/turn, which the wall out-heals forever).
+SELF_SCALERS = {99, 169, 205, 242, 303, 369, 532, 1053}
+FULL_METAL_LAB = 1244          # their stadium: -30 damage to Metal mons -> our lethal check lies
+# Hop's revenge package: Horrifying Revenge (Hop's Trevenant 879 <- Phantump 878) does +100 if
+# any Hop's Pokemon was KO'd last turn, and Hop's Cramorant 311 (Fickle Spitting 120) is dead
+# unless we hold exactly 3-4 prizes. Mined loss ep 82722580: we KO'd a harmless Cramorant, which
+# armed Revenge (190) and one-shot our lone wall. KO-ing their fodder is strictly worse than END.
+HOPS_REVENGE_LINE = {878, 879}
+HOPS_FODDER = {304, 311, 878}
+
 PLACEMENT_CTX = {
     SelectContext.EVOLVE, SelectContext.EVOLVES_FROM, SelectContext.EVOLVES_TO,
     SelectContext.TO_BENCH, SelectContext.TO_FIELD, SelectContext.TO_ACTIVE,
@@ -80,15 +76,6 @@ try:
     _CARD = {c.cardId: c for c in all_card_data()}
 except Exception:
     _CARD = {}
-
-try:
-    _ATK = {a.attackId: a for a in all_attack()}
-except Exception:
-    _ATK = {}
-
-# Attacks carrying this phrase (Nebula Beam 210, Destructive Drill 150, ...) pierce Mysterious
-# Rock Inn; every other Pokémon-ex attack is blanked while a Crustle is the target.
-_PIERCE = "any effects on your opponent"
 
 
 def _meta(card_id):
@@ -195,85 +182,38 @@ def _opp_active(state, me_i):
     return None
 
 
-def _opp_threat(state, me_i) -> int:
-    """Best data-visible attack damage the opponent's active can put on our active.
-
-    Weakness-doubled; zeroed when our active Crustle's Mysterious Rock Inn blanks a non-piercing
-    Pokémon-ex attacker. Text-scaling attacks (Powerful Hand, Work Rush, ...) carry damage=0 in
-    the card data, so this is a LOWER bound — it drives emergency heals only, never heal denial.
-    """
-    op = _opp_active(state, me_i)
-    ocd = _meta(_id(op)) if op is not None else None
-    if ocd is None:
-        return 0
-    mine = _my_active(state, me_i)
-    mcd = _meta(_id(mine)) if mine is not None else None
-    is_ex = bool(getattr(ocd, "ex", False) or getattr(ocd, "megaEx", False))
-    op_energy = len(getattr(op, "energies", None) or [])
-    best = 0
-    for aid in (getattr(ocd, "attacks", None) or []):
-        a = _ATK.get(aid)
-        if a is None:
-            continue
-        # Only a payable attack is a threat: they attach at most 1 energy before striking, so an
-        # attacker sitting 2+ energy short of the cost cannot hit us next turn. (Without this the
-        # opening Dwebble reads "doomed" against an unfuelled wall and never gets its Ascension
-        # energy — the exact line the whole deck is built on.)
-        if op_energy + 1 < len(a.energies or []):
-            continue
-        dmg = a.damage or 0
-        if aid == 1072:
-            # Alakazam "Powerful Hand": 2 damage counters per card in their hand — counter
-            # placement, so no weakness and Rock Inn does NOT stop it. This is THE wall-breaker
-            # (one-shots every wall once their hand is 8+), invisible in the damage data.
-            try:
-                hand_n = state.players[1 - me_i].handCount or 0
-            except Exception:
-                hand_n = 0
-            best = max(best, 20 * hand_n)
-            continue
-        if dmg <= 0:
-            continue
-        text = a.text or ""
-        if mcd is not None and _PIERCE not in text:
-            atype = getattr(ocd, "energyType", None)
-            if getattr(mcd, "weakness", None) is not None and atype is not None and mcd.weakness == atype:
-                dmg *= 2
-        if _id(mine) == CRUSTLE and is_ex and _PIERCE not in text:
-            dmg = 0
-        best = max(best, dmg)
-    return best
-
-
-def _wall_immune(state, me_i) -> bool:
-    """True when our ACTIVE Crustle blanks the opponent's active attacker entirely: they are a
-    Pokémon-ex and none of their attacks pierce Mysterious Rock Inn. This is the true stall
-    state — they cannot touch the wall, so the game is ours on prizes or their deck-out."""
-    if _id(_my_active(state, me_i)) != CRUSTLE:
-        return False
-    op = _opp_active(state, me_i)
-    ocd = _meta(_id(op)) if op is not None else None
-    if ocd is None or not (getattr(ocd, "ex", False) or getattr(ocd, "megaEx", False)):
-        return False
-    for aid in (getattr(ocd, "attacks", None) or []):
-        a = _ATK.get(aid)
-        if a is not None and _PIERCE in (a.text or ""):
-            return False
-    return True
-
-
-def _stall_conserve(state, me_i) -> bool:
-    """In a stall the loser is whoever starts a turn with 0 deck cards first: once we cannot
-    out-deck the opponent by a safe margin, every optional draw/search is a step toward our own
-    deck-out. Only fires in the blanked-ex stall — in live damage races drawing stays correct."""
+def _opp_board(state, me_i):
+    """(in-play card ids, in-play body count) for the opponent — used by the v8 feed guards."""
+    ids, n = set(), 0
     try:
-        if not _wall_immune(state, me_i):
-            return False
-        me = state.players[me_i]
         op = state.players[1 - me_i]
-        return me.deckCount <= op.deckCount + 4
+        for p in (op.active or []):
+            if p is not None:
+                ids.add(_id(p)); n += 1
+        for p in (op.bench or []):
+            if p is not None:
+                ids.add(_id(p)); n += 1
     except Exception:
-        return False
+        pass
+    return ids, n
+
+
+def _stadium_id(state):
+    try:
+        st = state.stadium
+        if st and st[0] is not None:
+            return _id(st[0])
+    except Exception:
+        pass
+    return None
+
+
+def _my_prizes_left(state, me_i):
+    try:
+        pz = state.players[me_i].prize
+        return len(pz) if isinstance(pz, list) else (pz if pz is not None else 6)
+    except Exception:
+        return 6
 
 
 def _opponent_value(p) -> float:
@@ -312,46 +252,27 @@ def score_main(obs, o, me_i) -> float:
         # Hero's Cape: only ever onto the ACTIVE wall (+100 HP, active-only).
         if cid == HEROS_CAPE:
             return 2100.0 if o.inPlayArea == AreaType.ACTIVE else 0.0
+        # v8 energy-identity tie-break (strictly < 2.0 so it can never cross a priority rung):
+        # Grow Grass first (+20 max HP on the Grass wall it lands on — pure survival vs the
+        # 190-240/turn non-ex piercers in our mined losses), then Spiky (2 counters back onto
+        # their attacker), then Basic {G} (keeps Superb Scissors payable), Mist last.
+        tie = {GROW_GRASS: 0.9, SPIKY: 0.6, BASIC_GRASS: 0.3}.get(cid, 0.0)
         # Energy gradient. The active wall needs 3 energy (Superb Scissors AND Jumbo Ice Cream);
         # once it has them, the marginal energy is worth far more on a benched Crustle, so a
         # promoted backup is immediately battle-ready — board presence is the whole game here
         # (every mirror loss is "no Active Pokémon"). So: under-fuelled active first, then pre-fuel
         # a benched Crustle, then a topped-up active, then anything.
-        # Within the active's fuel, the CARD matters: Grow Grass provides the attack's {G} AND
-        # +20 HP on the wall; Spiky reflects 20 onto every attacker that hits us (compounding in
-        # the 120-per-hit mirror race); Basic {G} secures the cost; Mist (colorless) fills last.
         active = _my_active(state, me_i)
         active_energy = len(active.energies or []) if active is not None else 0
         if o.inPlayArea == AreaType.ACTIVE:
-            has_g = any(int(e) == int(EnergyType.GRASS) for e in (active.energies or [])) \
-                if active is not None else False
-            # Doomed-wall triage: if the opponent's next hit KOs this active and it still can't
-            # reach Superb Scissors (would end the turn below 3 energy), the energy dies with it
-            # having never attacked. Route the attachment to the bench instead so the NEXT wall
-            # promotes battle-ready — energy attrition is exactly how wall-breakers chain us down.
-            if active is not None and active_energy < 2 and _my_bench_count(state, me_i) > 0:
-                threat = _opp_threat(state, me_i)
-                if threat > 0 and (active.hp or 0) <= threat:
-                    return 1009.0
-            if active_energy < 3:
-                bias = {GROW_GRASS: 8.0, SPIKY: 6.0, BASIC_GRASS: 4.0}.get(cid, 0.0)
-                if not has_g and active_energy >= 2 and cid in (GROW_GRASS, BASIC_GRASS):
-                    bias += 15.0   # last fuel slot: Superb Scissors needs a {G} source
-                return 1060.0 + bias
-            if not has_g and cid in (GROW_GRASS, BASIC_GRASS):
-                return 1055.0      # 3+ energies but all colorless: fix the {G} line first
-            if cid == GROW_GRASS:
-                return 1020.0      # +20 max HP on the tank, still below arming a backup
-            if cid == SPIKY:
-                return 1012.0
-            return 1005.0
+            return (1060.0 if active_energy < 3 else 1005.0) + tie
         if o.inPlayArea == AreaType.BENCH:
             tgt = _get(obs, o.inPlayArea, o.inPlayIndex, me_i)
             if _id(tgt) == CRUSTLE:
                 tgt_energy = len(tgt.energies or [])
-                return 1030.0 if tgt_energy < 3 else 1008.0
-            return 1010.0
-        return 1000.0
+                return (1030.0 if tgt_energy < 3 else 1008.0) + tie
+            return 1010.0 + tie
+        return 1000.0 + tie
 
     if t == OptionType.EVOLVE:
         return 800.0
@@ -360,34 +281,17 @@ def score_main(obs, o, me_i) -> float:
         card = _get(obs, AreaType.HAND, o.index, me_i)
         cid = _id(card)
         active = _my_active(state, me_i)
-        # Heal discipline: the 8 heal cards are the wall's real HP pool — burning one on chip
-        # damage smaller than the heal throws away effective HP the long matchups need. Heal at
-        # full value only, EXCEPT when the opponent's best visible attack would KO us as-is.
-        if cid in (JUMBO_ICE_CREAM, COOK):
-            if active is None:
-                return -2.0
-            dmg_taken = max(0, (active.maxHp or 0) - (active.hp or 0))
-            if dmg_taken <= 0:
-                return -2.0
-            emergency = (active.hp or 0) <= _opp_threat(state, me_i)
-            # Jumbo Ice Cream: heal 80, needs 3+ energy attached — else it does nothing.
-            if cid == JUMBO_ICE_CREAM:
-                if len(active.energies or []) >= 3 and (dmg_taken >= 80 or emergency):
-                    return 2000.0
-                return -2.0
-            # Cook: heal 70 (supporter — don't spend the slot on a partial heal).
-            if dmg_taken >= 70 or emergency:
+        # Jumbo Ice Cream: heal 80, only when damaged AND 3+ energy attached — else it does nothing.
+        if cid == JUMBO_ICE_CREAM:
+            if active is not None and (active.hp or 0) < (active.maxHp or 0) and len(active.energies or []) >= 3:
+                return 2000.0
+            return -2.0   # wasted heal scores BELOW end-turn
+        # Cook: heal 70, only when damaged.
+        if cid == COOK:
+            if active is not None and (active.hp or 0) < (active.maxHp or 0):
                 return 1500.0
             return -2.0
-        if cid == CHEREN:        # draw 3 — keep the engine flowing…
-            try:
-                my_deck = state.players[me_i].deckCount
-            except Exception:
-                my_deck = 99
-            if my_deck <= 8:
-                return -2.0      # …but never draw ourselves toward the deck-out floor
-            if _stall_conserve(state, me_i):
-                return -2.0      # deck-out war: whoever burns their deck first loses
+        if cid == CHEREN:        # draw 3 — keep the engine flowing
             return 1400.0
         if cid == BATTLE_CAGE:   # stadium — shield the bench from damage counters
             return 1300.0
@@ -399,8 +303,6 @@ def score_main(obs, o, me_i) -> float:
             bench_n = _my_bench_count(state, me_i)
             if bench_n <= 0:
                 return 1900.0
-            if _stall_conserve(state, me_i):
-                return -2.0      # it thins our deck by 2 and parks snipeable 70HP bodies
             if bench_n < 3:
                 return 1650.0    # still want a deep bench of backups
             return 200.0         # bench already deep -> save it
@@ -426,6 +328,19 @@ def score_main(obs, o, me_i) -> float:
             dmg = _attack_damage(_my_active(state, me_i), o.attackId, oa)
         except Exception:
             dmg = 0
+        # v8 feed guards (loss-driven): for a deck whose win condition is out-lasting the
+        # opponent, some attacks are strictly worse than END (2.0) — score them 1.0 so the turn
+        # ends instead. Never applied when we are 1 KO from prizing out (the win beats any guard).
+        if oa is not None and dmg > 0 and _my_prizes_left(state, me_i) > 2:
+            oa_id = _id(oa)
+            margin = 30 if _stadium_id(state) == FULL_METAL_LAB else 0
+            kills = dmg >= ((oa.hp or 0) + margin)
+            if oa_id in SELF_SCALERS and not kills:
+                return 1.0     # our chip fuels their self-scaling attack (Raging Hammer et al.)
+            if kills and oa_id in HOPS_FODDER:
+                opp_ids, opp_n = _opp_board(state, me_i)
+                if opp_n >= 2 and (opp_ids & HOPS_REVENGE_LINE):
+                    return 1.0  # the KO arms Horrifying Revenge / walks us into Fickle range
         score += min(max(dmg, 0), 250) * 0.2
         if oa is not None and dmg > 0 and dmg >= (oa.hp or 0):
             score += 150.0
@@ -439,7 +354,9 @@ def score_main(obs, o, me_i) -> float:
         return -1.0
 
     if t == OptionType.END:
-        return 0.0
+        # 2.0 (not 0.0) so a feed-guarded attack (1.0) loses cleanly to ending the turn while
+        # every real action (>=100) still outranks END exactly as before.
+        return 2.0
     return 0.0
 
 
@@ -477,13 +394,6 @@ def score_sub(obs, o, me_i, context) -> float:
                         score += getattr(card, "hp", 0) or 0
                         if cid == CRUSTLE:
                             score += 60.0
-                        # Battle-readiness: after a KO promote the FUELLED backup (it attacks
-                        # immediately), and value attached tools — not just the HP number. The
-                        # curve is convex: a 3-energy wall Superbs the turn it lands, while a
-                        # half-fuelled one mostly donates its energy to the next KO.
-                        e_n = len(getattr(card, "energies", None) or [])
-                        score += 100.0 if e_n >= 3 else (30.0 if e_n == 2 else 10.0 * e_n)
-                        score += 20.0 * len(getattr(card, "tools", None) or [])
             else:
                 if context in GIVE_UP_CTX:
                     if cid in KEY_PIECES:
@@ -504,10 +414,7 @@ def score_sub(obs, o, me_i, context) -> float:
                 score -= 40.0
 
     elif t == OptionType.YES:
-        # Default yes — INCLUDING turn order: Superb Scissors is energy-gated (3 attachments),
-        # so the first player reaches it a half-round earlier and stays a full hit ahead for the
-        # whole race. Measured: the mirror is a KO race (0 deck-outs), and going second meant
-        # eating the first 120 in every flip we won. Go FIRST.
+        # Default yes — except turn order: a slow wall/heal deck prefers to go SECOND.
         if context == SelectContext.IS_FIRST:
             score += 0.0
         else:
@@ -515,7 +422,7 @@ def score_sub(obs, o, me_i, context) -> float:
 
     elif t == OptionType.NO:
         if context == SelectContext.IS_FIRST:
-            score += 150.0
+            score += 150.0     # go second
         else:
             score += 0.0
 

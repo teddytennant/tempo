@@ -1,0 +1,49 @@
+=== crustle v8 ship — 2026-07-18 (session log) ===
+Submitted: ref 54806735  submission_crustle_v8.tar.gz  2026-07-18 11:23:57 UTC
+Artifact: agent/submission_crustle.tar.gz (proven 366-line-rules base; 863 once, 775-795
+converged over 4 re-ships) repacked with ONLY crustle_rules.py swapped for v8.
+Evicts from scored latest-2: ref 54794471 (crustle re-ship, 776.9); pairs with tusk 54796124.
+
+--- Ladder loss mining (tools/starmie_ladder_report.py) ---
+refs mined: 54794471 (59 eps, current window) + 54181814 (109 eps, 06-29 re-ship) = 93 losses
+Loss buckets: Archaludon/Duraludon 20, Alakazam Powerful-Hand family ~28 (incl 9 mislabeled
+"Fezandipiti ex"), Mega Lucario 15 (6 board wipes), Mega Starmie/Froslass 15, Hop's Trevenant 3.
+Diagnoses (replay narration):
+* ep 86662212: our Superb Scissors chipped Duraludon (Full Metal Lab cut 120->90), feeding
+  Raging Hammer (80 + 10/counter on itself) to 170-190/turn > our 150/turn heal ceiling.
+  Unfed it stays at 80/turn, which Cook+Jumbo out-heal indefinitely.
+* ep 82722580: we KO'd Hop's Cramorant (Fickle Spitting is dead unless we hold exactly 3-4
+  prizes) — armed Horrifying Revenge (+100 -> 190) which OHKO'd our lone 170HP wall, turn 7.
+* Alakazam 240-280 counter nukes + Nebula Beam 210 pierce: structural, no rules lever found.
+
+--- Fixes shipped (agent/crustle_rules.py; each individually validated) ---
+F1 self-scaler feed guard: non-lethal attacks into SELF_SCALERS {99,169,205,242,303,369,532,1053}
+   score 1.0 < END 2.0; lethal margin +30 under Full Metal Lab (1244); off at <=2 prizes left.
+   Replay check: on real loss ep 86662212 frames, base picks ATTACK, v8 picks END (verified).
+F2 Hop's revenge guard: no KO on fodder {304,311,878} while {878,879} in play and opp board >=2.
+   Arm: hops-trevenant 29.6% -> 44.0% (n=200+200, CIs disjoint).
+F3 Grow-Grass-first attach tie-break (+0.9 GG / +0.6 Spiky / +0.3 Basic, < rung gap 2.0):
+   Arm: dashimaki mirror 42.0% -> 52.0% (n=200+200).
+Rejected after individual arms: Cook>=50 heal gate (behaviorally inert, identical tallies);
+fueled-promotion bonus (REGRESSED b950 37->27.1, mirror 42->38) — left at base behavior.
+
+--- Gate matrix (tools/wall_gate_eval.py, n=200/arm, seats alternated, paired seeds) ---
+arm                       BASE    v8     delta
+mirror (bot:crustle)      42.0    52.0   +10.0
+baseline950 (bot)         37.0    34.2   -2.8
+alakazam (deploy dunsp.)   8.0     7.0   -1.0
+grimmsnarl v2 (deploy)    84.0    86.5   +2.5
+tusk (deploy alancai)     92.0    90.5   -1.5
+starmie (deploy)          23.5    20.0   -3.5
+archaludon (mined deck)   90.5    92.0   +1.5
+hops-trevenant (mined)    29.6    44.0   +14.4
+AGGREGATE                 50.9    53.3   +2.5   (no arm regression > 5pt; 0 error games in
+                                                 all 3200 candidate-side games)
+Note: cross-era numbers (v7-commit "68.9% mirror") do NOT reproduce today even in
+arena/matchup_eval (live agent mirror = 37.5% now) — sibling modules and deploy moved; gates
+are therefore within-session paired base-vs-candidate measurements.
+
+--- Packed smoke ---
+Full kaggle_environments 1.32.0 cabt mirror episode from the extracted tarball:
+steps=156 statuses=[DONE, DONE] rewards=[1, -1]  (scripts/ship_crustle_v8.sh)
+Tarball diff vs proven base: crustle_rules.py ONLY.
