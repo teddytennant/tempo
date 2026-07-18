@@ -32,6 +32,13 @@ except Exception:
     except Exception:
         _grimmsnarl = None
 try:
+    import tusk_rules as _tusk                # Great Tusk mill box (alancai27 stable-894 replica)
+except Exception:
+    try:
+        from agent import tusk_rules as _tusk
+    except Exception:
+        _tusk = None
+try:
     import crustle_rules as _crustle          # when agent/ is on sys.path (submission runtime)
 except Exception:
     try:
@@ -394,11 +401,25 @@ def best_options(obs_dict) -> list[int]:
             except Exception:
                 grimmsnarl = False
 
+        # Great Tusk mill-box specialist (alancai27's stable-894 list): checked BEFORE the crustle
+        # specialist because this list CONTAINS Dwebble 344 / Crustle 345 (the crustle signature)
+        # and before cinderace (it plays Ultra Ball 1121, part of that gate). Its own gate keys on
+        # list-unique cards (Great Tusk 58 / Terrakion 607 / Lisia 1204, or the 344/345 line PLUS
+        # a tusk-only trainer) and LATCHES per seat, so no other deck routes through it.
+        tusk = False
+        if not grimmsnarl and _tusk is not None:
+            try:
+                tusk = _tusk.is_tusk_deck(state, me_i)
+                if tusk:
+                    _tusk.note_obs(obs, obs_dict, me_i)
+            except Exception:
+                tusk = False
+
         # Crustle wall specialist: when we're piloting the wall, use its card-id-gated scoring
         # (and a verified multi-step lethal check) instead of the generic table. For every other
         # deck this never triggers (no Dwebble/Crustle on our side), so the generic path is intact.
         crustle = False
-        if not grimmsnarl and _crustle is not None:
+        if not grimmsnarl and not tusk and _crustle is not None:
             try:
                 crustle = _crustle.is_crustle_deck(state, me_i)
             except Exception:
@@ -408,7 +429,7 @@ def best_options(obs_dict) -> list[int]:
         # Crustle wall is NOT on our side, so the two id-gated paths never overlap). Generic +
         # Crustle paths are untouched for every other deck.
         lucario = False
-        if not grimmsnarl and not crustle and _lucario is not None:
+        if not grimmsnarl and not tusk and not crustle and _lucario is not None:
             try:
                 lucario = _lucario.is_lucario_deck(state, me_i)
             except Exception:
@@ -419,7 +440,7 @@ def best_options(obs_dict) -> list[int]:
         # gate is the disjoint subset (Cinderace/Crushing Hammer/Harlequin/Ultra Ball/Hero's Cape) and
         # the starmie gate below is suppressed when it fires — the two never both pilot the same deck.
         cinderace = False
-        if not grimmsnarl and not crustle and not lucario and _cinderace is not None:
+        if not grimmsnarl and not tusk and not crustle and not lucario and _cinderace is not None:
             try:
                 cinderace = _cinderace.is_cinderace_deck(state, me_i)
                 if cinderace:
@@ -431,7 +452,7 @@ def best_options(obs_dict) -> list[int]:
         # (signatures disjoint from Crustle/Lucario, so the id-gated paths never overlap). It keeps a
         # per-game prize tracker so its deck-search decisions never whiff on a prized card.
         starmie = False
-        if not grimmsnarl and not crustle and not lucario and not cinderace and _starmie is not None:
+        if not grimmsnarl and not tusk and not crustle and not lucario and not cinderace and _starmie is not None:
             try:
                 starmie = _starmie.is_starmie_deck(state, me_i)
                 if starmie:
@@ -445,7 +466,7 @@ def best_options(obs_dict) -> list[int]:
         # dunsparce list, so it is checked FIRST (its gate also requires a list-unique card) and the
         # dunsparce gate below is suppressed when it fires — the two never both pilot the same deck.
         fezandipiti = False
-        if (not grimmsnarl and not crustle and not lucario and not cinderace and not starmie
+        if (not grimmsnarl and not tusk and not crustle and not lucario and not cinderace and not starmie
                 and _fezandipiti is not None):
             try:
                 fezandipiti = _fezandipiti.is_fezandipiti_deck(state, me_i)
@@ -456,7 +477,7 @@ def best_options(obs_dict) -> list[int]:
         # (signature disjoint from Crustle/Lucario/Starmie, so the id-gated paths never overlap). It
         # is the one deck that breaks the Crustle wall (Powerful Hand is non-ex damage counters).
         dunsparce = False
-        if (not grimmsnarl and not crustle and not lucario and not cinderace and not starmie
+        if (not grimmsnarl and not tusk and not crustle and not lucario and not cinderace and not starmie
                 and not fezandipiti and _dunsparce is not None):
             try:
                 dunsparce = _dunsparce.is_dunsparce_deck(state, me_i)
@@ -468,7 +489,7 @@ def best_options(obs_dict) -> list[int]:
         # overlap). This is the empirically strongest archetype on the board (it beats all four of our
         # other decks as an opponent), piloted here on our own side.
         iono = False
-        if (not grimmsnarl and not crustle and not lucario and not cinderace and not starmie
+        if (not grimmsnarl and not tusk and not crustle and not lucario and not cinderace and not starmie
                 and not dunsparce and not fezandipiti and _iono is not None):
             try:
                 iono = _iono.is_iono_deck(state, me_i)
@@ -479,7 +500,7 @@ def best_options(obs_dict) -> list[int]:
         # line (signature 304/311/878/879 disjoint from every other specialist, so the id-gated paths
         # never overlap). This is the #2 frontier team's deck ("The Debauchery Tea Party", ~1358 Elo).
         hops_snorlax = False
-        if (not grimmsnarl and not crustle and not lucario and not cinderace and not starmie
+        if (not grimmsnarl and not tusk and not crustle and not lucario and not cinderace and not starmie
                 and not dunsparce and not fezandipiti and not iono and _hops_snorlax is not None):
             try:
                 hops_snorlax = _hops_snorlax.is_hops_snorlax_deck(state, me_i)
@@ -488,10 +509,12 @@ def best_options(obs_dict) -> list[int]:
 
         # Specialist guard FIRST so it short-circuits before touching SelectContext.MAIN (which the
         # mock test engine does not define): when no specialist is active this whole gate is skipped.
-        if (grimmsnarl or crustle or lucario or cinderace or starmie or dunsparce or iono or fezandipiti or hops_snorlax) and _lethal_move is not None and ctx == SelectContext.MAIN:
+        if (grimmsnarl or tusk or crustle or lucario or cinderace or starmie or dunsparce or iono or fezandipiti or hops_snorlax) and _lethal_move is not None and ctx == SelectContext.MAIN:
             try:
                 if grimmsnarl:
                     deck = _grimmsnarl.GRIMMSNARL_DECK
+                elif tusk:
+                    deck = _tusk.TUSK_DECK
                 elif crustle:
                     deck = _crustle.CRUSTLE_DECK
                 elif lucario:
@@ -535,6 +558,11 @@ def best_options(obs_dict) -> list[int]:
                         scores.append(_grimmsnarl.score_main(obs, o, me_i))
                     else:
                         scores.append(_grimmsnarl.score_sub(obs, o, me_i, ctx))
+                elif tusk:
+                    if ctx == SelectContext.MAIN:
+                        scores.append(_tusk.score_main(obs, o, me_i))
+                    else:
+                        scores.append(_tusk.score_sub(obs, o, me_i, ctx))
                 elif crustle:
                     if ctx == SelectContext.MAIN:
                         scores.append(_crustle.score_main(obs, o, me_i))
