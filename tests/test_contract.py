@@ -40,12 +40,14 @@ def test_deck_selection_via_observation_none_select():
 
 
 # ── core in-game prompts ──────────────────────────────────────────────────────
-def test_go_first_prefers_yes():
+def test_go_first_prefers_second():
+    # The scorer deliberately declines going first (setup/reactive decks want the extra
+    # information and the first attack turn) — see scorer._score_sub IS_FIRST handling.
     sel = cg.Select(option=[cg.Option(cg.OptionType.YES), cg.Option(cg.OptionType.NO)],
                     context=cg.SelectContext.IS_FIRST, minCount=1, maxCount=1)
     out = main.agent({"current": _state(), "select": sel})
     _assert_legal(out, sel)
-    assert out == [0]  # YES
+    assert out == [1]  # NO -> go second
 
 
 def test_lethal_attack_is_taken():

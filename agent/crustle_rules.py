@@ -60,6 +60,48 @@ FULL_METAL_LAB = 1244          # their stadium: -30 damage to Metal mons -> our 
 HOPS_REVENGE_LINE = {878, 879}
 HOPS_FODDER = {304, 311, 878}
 
+# ── v9 ladder-loss addition (mined from ref 54806735 loss replays, 2026-07-19) ────────────────
+# 15 of 33 live-ladder losses were the Powerful-Hand family (Alakazam 743 + Fezandipiti/
+# Dunsparce shells) wiping our board with PLACED damage counters (20 x hand). Placement is an
+# attack EFFECT, not damage — and Mist Energy's own text prevents ALL attack effects on its
+# holder ("Damage is not an effect."). The deck already runs 4 Mist; v8 attached it LAST
+# (tie 0.0 < Grow Grass 0.9). Against counter-effect attackers the Mist goes on FIRST, and we
+# prefer promoting an already-Misted wall.
+COUNTER_EFFECT_LINE = {741, 742, 743, 245}   # Abra/Kadabra/Alakazam(PH) + Alakazam(Mind Jack)
+# NOT Munkidori 112: its counter-moving is an ABILITY — Mist only prevents attack effects, and
+# treating it as a trigger cost real Grow-Grass HP ordering vs Tea Party (-2.4pt over n=800).
+
+
+def _opp_counter_effects(state, me_i) -> bool:
+    """Opponent visibly plays a counter-placing attacker (fresh scan each call; discard counts,
+    so once seen it effectively stays on). Never raises."""
+    try:
+        op = state.players[1 - me_i]
+        for p in (list(op.active or []) + list(op.bench or [])):
+            if p is None:
+                continue
+            if _id(p) in COUNTER_EFFECT_LINE:
+                return True
+            for c in (getattr(p, "preEvolution", None) or []):
+                if _id(c) in COUNTER_EFFECT_LINE:
+                    return True
+        for c in (op.discard or []):
+            if _id(c) in COUNTER_EFFECT_LINE:
+                return True
+    except Exception:
+        return False
+    return False
+
+
+def _has_mist(p) -> bool:
+    try:
+        for c in (getattr(p, "energyCards", None) or []):
+            if _id(c) == MIST:
+                return True
+    except Exception:
+        pass
+    return False
+
 PLACEMENT_CTX = {
     SelectContext.EVOLVE, SelectContext.EVOLVES_FROM, SelectContext.EVOLVES_TO,
     SelectContext.TO_BENCH, SelectContext.TO_FIELD, SelectContext.TO_ACTIVE,
@@ -257,6 +299,13 @@ def score_main(obs, o, me_i) -> float:
         # 190-240/turn non-ex piercers in our mined losses), then Spiky (2 counters back onto
         # their attacker), then Basic {G} (keeps Superb Scissors payable), Mist last.
         tie = {GROW_GRASS: 0.9, SPIKY: 0.6, BASIC_GRASS: 0.3}.get(cid, 0.0)
+        # v9: vs counter-effect attackers (Powerful Hand et al.) an un-Misted wall dies to
+        # placed counters that ignore its ex-shield — the first Mist on that wall blanks the
+        # whole plan. 1.5 stays far below the 30-point rung gaps: order within a rung only.
+        if cid == MIST and _opp_counter_effects(state, me_i):
+            tgt_m = _get(obs, o.inPlayArea, o.inPlayIndex, me_i)
+            if tgt_m is not None and not _has_mist(tgt_m):
+                tie = 1.5
         # Energy gradient. The active wall needs 3 energy (Superb Scissors AND Jumbo Ice Cream);
         # once it has them, the marginal energy is worth far more on a benched Crustle, so a
         # promoted backup is immediately battle-ready — board presence is the whole game here
@@ -378,6 +427,10 @@ def score_sub(obs, o, me_i, context) -> float:
                     score += 80.0
                 if _is_basic_pokemon(cid) and _my_bench_count(state, me_i) <= 0:
                     score += 400.0   # empty bench -> a benchable Basic is the priority fetch
+                # v9: promote the already-Misted wall vs counter-effect attackers.
+                if (isinstance(card, Pokemon) and _has_mist(card)
+                        and _opp_counter_effects(state, me_i)):
+                    score += 60.0
             elif context == SelectContext.TO_HAND and cid in (CRUSTLE, DWEBBLE):
                 score += 100.0
                 if cid == DWEBBLE and _my_bench_count(state, me_i) <= 0:

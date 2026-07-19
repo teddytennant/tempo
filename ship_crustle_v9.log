@@ -1,0 +1,72 @@
+=== crustle v9 build — 2026-07-19 (session log; BUILT AND SMOKED, NOT SUBMITTED) ===
+Artifact: agent/submission_crustle_v9.tar.gz — the proven agent/submission_crustle.tar.gz
+(366-line-rules base; 863 once, 775-795 converged) repacked with ONLY crustle_rules.py swapped
+for the v9 fix set. Byte-diff vs the live v8 artifact (54806735): crustle_rules.py ONLY.
+Ship (human decision): bash scripts/ship_crustle_v9.sh "<msg>"   (--dry-run to re-smoke only)
+
+--- Base choice (ladder ground truth 2026-07-19) ---
+Scored latest-2: crustle v8 54806735 = 759.8, tusk 54796124 = 732.3 (evicted crustle re-ship
+was 776.9). The tusk replica underperforms its 894 teacher; the Crustle wall is our strongest
+converged base -> harden it.
+
+--- Ladder loss mining (tools/starmie_ladder_report.py --submission 54806735, 33 losses) ---
+Buckets: Powerful-Hand family (Fezandipiti/Dunsparce/Abra shells) 15, Mega Lucario ex 6,
+Archaludon ex 5 (3 board-wipe + 2 deck-outs t55/t65), TR Mewtwo 2, misc 5.
+ALL non-deck-out losses are board-wipes (no-active), NOT prize-outs: they grind our 1-2 fielded
+walls down while our deck still holds 34-44 cards.
+
+--- v9 fix (agent/crustle_rules.py; the ONE validated lever) ---
+MIST-BLANKS-POWERFUL-HAND: Powerful Hand (743) does its damage by PLACING counters — an attack
+EFFECT — and Mist Energy prevents all attack effects on its holder ("Damage is not an effect").
+v8 attached Mist LAST (tie 0.0 < Grow Grass 0.9). v9: vs a visible counter-effect line
+{741,742,743,245} the first Mist on an un-Misted target gets tie 1.5 (still < the 30-pt rung
+gaps) + promote an already-Misted wall (+60 in placement contexts).
+Mechanism verified in-engine (probe): misted 150HP Crustle took 8 consecutive Powerful Hands
+for ZERO damage; their draw engine then decked itself out (t11-22).
+Their counterplay observed: Enhanced Hammer strips the Mist (we re-mist), Boss's Orders farms
+un-misted bench.
+NOT Munkidori 112: its counter-moving is an ABILITY (Mist blocks attack effects only); including
+it cost -2.4pt vs Tea Party over n=800 -> removed.
+
+Rejected after individual arms (kept out of the ship):
+* Mist-any-Crustle rung boost (L1e): alakazam arm 15.5 -> 11.5 (worse; active 3-energy matters).
+* Cheren deck-parity governor (2 variants): mirror 55.8 -> 51.5 / 48.8 trend-negative; its
+  target (2 ladder deck-outs) is locally unmeasurable. Rejected.
+* Poffin bench-stock vs counter family (L3b): +1.7 at n=400/arm — noise, not provable. Rejected.
+
+--- Gate matrix (tools/wall_gate_eval.py, seats alternated, flat-dir pilots = shipped bytes) ---
+BASE = extracted submission_crustle_v8.tar.gz; CAND = same + v9 crustle_rules.py.
+L1 changes behavior ONLY vs decks holding {741,742,743,245}: of the 9 arms that is alakazam
+(dunsparce.csv) alone; every other arm is behaviorally inert (deltas there = cross-run RNG,
+confirmed by re-runs at n=600/arm).
+arm                          BASE wr (n)     CAND wr (n)     delta
+mirror (bot:crustle)         55.8 (199)      56.5 (200)      +0.7  (inert)
+baseline950 (bot)            30.5 (200)      35.5 (200)      +5.0  (inert; noise)
+dragapult (bot)             100.0 (200)      99.5 (200)      -0.5  (inert)
+alakazam PH (deploy dunsp.)   5.0 (200)      14.2 (1100)     +9.2  REAL, CIs disjoint
+                                             [pooled 156/1100; per-run 15.5/12.5/12.5/16.7]
+grimmsnarl (deploy TeaParty) 88.2 (600)      86.3 (300)      -1.9  (inert after 112 removal)
+tusk (deploy alancai)        91.5 (200)      90.5 (200)      -1.0  (inert)
+starmie (deploy)             32.0 (200)      28.0 (200)      -4.0  (inert; noise)
+archaludon (ShumpeiNomura)  100.0 (200)      99.5 (200)      -0.5  (inert)
+hops (deploy, n=600 rerun)   45.7 (598)      46.7 (600)      +1.0  (inert; the first-pass -8.0
+                                                                    at n=200 was RNG, resolved)
+AGGREGATE (9 arms, n=200 pass): base 61.8%, cand 61.6% (equal within noise); the only real
+behavioral delta is +9.2 on the arm that mirrors 45% of live ladder losses. 0 error games in
+all ~3900 candidate-side games.
+
+--- Contract ---
+pytest: 11 passed (fixed pre-existing mock-fidelity failures: mock SelectContext lacked MAIN --
+real engine MAIN=0 -- and test_go_first encoded the stage-0 "go first" preference; the scorer
+deliberately goes second).
+Packed smoke (full kaggle_environments cabt mirror episode from the extracted v9 tarball):
+steps=132 statuses=[DONE, DONE] rewards=[1, -1]
+
+--- Honest risk ---
+This is a floor-preserving move with one surgical matchup gain, not a ceiling-breaker: vs
+non-counter decks v9 is byte-behavior-identical to the proven v8 (759.8 live). Expected live
+effect: recovers a slice of the largest loss bucket (PH family, 45% of losses; local arm 5->14%
+vs an elite PH pilot; ladder PH pilots are weaker, so the recovered slice may be larger).
+Residual known losses (structural, no rules lever found): Hariyama Wild Press 210 + Mega
+Lucario Dwebble-farming (b950-style, ~35%), Mega Starmie Nebula Beam 210 pierce, elite PH
+hands that hammer the Mist off. Beating ~890 requires more than the wall can give.
