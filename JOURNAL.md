@@ -90,3 +90,10 @@ Expected active pair after convergence: ~785 + 716.1, so LB ~785 (from 716.1).
 4. Do NOT commit the working tree. Resolve the stale revert first (`git checkout` the affected
    paths from HEAD, or establish that the working state is deliberate).
 5. The Strategy-track writeup (`STRATEGY.md`, due 2026-09-13, $30k × 8) does not exist yet.
+
+**Addendum (same run, ~20:50 UTC):** `55389333` is `SubmissionStatus.COMPLETE` with publicScore
+`600.0` — that is the *entry* rating every new agent starts at, not a converged score, and
+COMPLETE means the self-play validation game passed (no error, which is the robustness check that
+actually matters). It converges over the following hours. **Next run: re-read this ref's score
+before drawing any conclusion from it.** Active pair is now 55389333 + 55288207 (716.1), so the
+reported LB score will read 716.1 until the new agent climbs past it.
