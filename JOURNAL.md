@@ -224,3 +224,26 @@ than any deck swap. I did not chase it because the artifact was already submitte
    with it, which is its own finding: **our pilots are deck-specific and cannot fly a new list.**
 5. `STRATEGY.md` still does not exist ($30k × 8, due 2026-09-13). The three refutations above plus
    the meta-collapse story are a genuinely good writeup and the material is now all in this journal.
+
+**Addendum (same run, ~22:15 UTC) — the experiment has already answered.**
+`55389997` is `COMPLETE` and at **698.6** roughly 45 minutes in, still climbing from the 600 entry
+rating. Same run, `55389333` (the Crustle wall) sits at **506.0**.
+
+That is the deck-swap experiment resolved, and it resolved the *good* way: **identical pilot code,
++190 points from the decklist alone** (43.96% archetype → 54.3% archetype). So the answer to the
+question this slot was bought to settle is **"the deck was the problem, not the pilot"** — our
+rules-pilot method is not finished, it was flying a dead archetype. It is also already within ~18
+points of the teammate Alakazam notebook (716.1) that it evicted, while still converging upward, so
+the budgeted cost of the eviction looks like it will be roughly zero.
+
+**Direct consequence for slots 4–5:** the remaining active slot is the 506.0 Crustle, which is pure
+dead weight and free to replace. The highest-value follow-up is *more of what just worked* — take
+another archetype with a positive real-field win rate that we already have a specialist for, and
+put it on a top team's exact August list from `data/meta_aug/decks/`. Ranked by real-field win %
+against what `agent/scorer.py` can actually dispatch to:
+Lucario/Hariyama 54.3 (just shipped) > Lopunny/Froslass 51.7 > Fezandipiti/Alakazam 49.9
+(`fezandipiti_rules.py` + `dunsparce_rules.py`; AlphaStarmie and ANDPAD lists both mined) >
+Grimmsnarl 46.4 (`grimmsnarl_rules.py`, 30% of the field so the most-played matchup we can train on).
+Kangaskhan/Latias (63.2%) and Dragapult/Meowth (58.0%) are the two best decks in the format and we
+have **no pilot for either** — building one is a bigger, better bet than another list swap, and the
+0/32 result above says the generic path cannot substitute for it.
