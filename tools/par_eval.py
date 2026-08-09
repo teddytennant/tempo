@@ -49,7 +49,21 @@ def _mk(spec, seed):
     import main as m
     if pilot == "floor":
         return m.floor_agent
-    if pilot == "rust":
+    if pilot == "scorer":
+        # The rich heuristic prior alone — the policy every artifact since June actually shipped
+        # (scorer.best_options short-circuits main.agent before it ever reaches the search branch).
+        import scorer as _sc
+
+        def sp(obs_dict):
+            try:
+                sel = _sc.best_options(obs_dict)
+                if isinstance(sel, list) and sel:
+                    return sel
+            except Exception:
+                pass
+            return m.floor_agent(obs_dict)
+        return sp
+    if pilot in ("rust", "hybrid"):
         import engine_rs, os as _os, json as _j
         engine_rs.init(_os.path.abspath(_os.path.join(_ROOT, "cg", "libcg.so")))
         un = False; slot = 0
@@ -59,8 +73,24 @@ def _mk(spec, seed):
             _RUST_SLOT[0] += 1; un = True
         budget = max(0.2, iters / 100.0)  # reuse --iters as centiseconds of budget
         dd, oo = deck, (opp if opp else deck)
+        # "rust"   — search on MAIN single-selects, floor heuristic everywhere else (June's deploy).
+        # "hybrid" — same search, but the rich SCORER handles every non-searched decision, i.e.
+        #            lookahead layered ON TOP of the strong prior instead of replacing it.
+        if pilot == "hybrid":
+            import scorer as _sc
 
-        def rp(obs_dict, _dd=dd, _oo=oo, _b=budget, _s=seed, _un=un, _slot=slot):
+            def _rest(obs_dict):
+                try:
+                    sel = _sc.best_options(obs_dict)
+                    if isinstance(sel, list) and sel:
+                        return sel
+                except Exception:
+                    pass
+                return m.floor_agent(obs_dict)
+        else:
+            _rest = m.floor_agent
+
+        def rp(obs_dict, _dd=dd, _oo=oo, _b=budget, _s=seed, _un=un, _slot=slot, _f=_rest):
             try:
                 s = obs_dict.get("select"); c = obs_dict.get("current")
                 if (s and c and s.get("context") == 0 and s.get("maxCount") == 1
@@ -70,7 +100,7 @@ def _mk(spec, seed):
                         return r
             except Exception:
                 pass
-            return m.floor_agent(obs_dict)
+            return _f(obs_dict)
         return rp
     from search.mcts import MctsAgent
     rp = m.floor_select if rollout == "floor" else None
@@ -83,11 +113,17 @@ def _mk(spec, seed):
 
 
 def _worker(task):
-    seed, p0spec, p1spec, deck0, deck1 = task
+    seed, p0spec, p1spec, deck0, deck1, swap = task
     _random.seed(seed)
     a0 = _mk(p0spec, seed); a1 = _mk(p1spec, seed + 7919)
+    # swap seats p0 second. Going first is a real edge here, so a one-sided harness measures seat
+    # advantage as much as policy strength; the result is mapped back to p0's point of view.
     try:
-        res, _, errs = play_game(a0, a1, deck0, deck1)
+        if swap:
+            res, _, errs = play_game(a1, a0, deck1, deck0)
+            res = 1 - res if res in (0, 1) else res
+        else:
+            res, _, errs = play_game(a0, a1, deck0, deck1)
         return (res, errs)
     except Exception:
         return (-1, 1)
@@ -103,12 +139,14 @@ def main():
     ap.add_argument("--pv0", default=None); ap.add_argument("--pv1", default=None)
     ap.add_argument("--games", type=int, default=32); ap.add_argument("--workers", type=int, default=14)
     ap.add_argument("--seed", type=int, default=0); ap.add_argument("--label", default="")
+    ap.add_argument("--alternate", action="store_true", help="alternate seats to halve first-player bias")
     a = ap.parse_args()
 
     d0, d1 = _read(a.deck0), _read(a.deck1)
     p0spec = (a.p0, d0, _read(a.opp0), a.iters0, a.rollout0, a.pv0)
     p1spec = (a.p1, d1, _read(a.opp1), a.iters1, a.rollout1, a.pv1)
-    tasks = [(a.seed + i, p0spec, p1spec, d0, d1) for i in range(a.games)]
+    tasks = [(a.seed + i, p0spec, p1spec, d0, d1, bool(a.alternate and i % 2))
+             for i in range(a.games)]
 
     ctx = get_context("spawn")
     with ctx.Pool(a.workers) as pool:

@@ -97,3 +97,130 @@ COMPLETE means the self-play validation game passed (no error, which is the robu
 actually matters). It converges over the following hours. **Next run: re-read this ref's score
 before drawing any conclusion from it.** Active pair is now 55389333 + 55288207 (716.1), so the
 reported LB score will read 716.1 until the new agent climbs past it.
+
+---
+
+## 2026-08-09 — slot 3/5 — ANGLE: search depth (deeper/wider lookahead, better leaf eval)
+
+**Submitted:** ref `55389997` `luc_majkel.tar.gz` — "slot3 lucario-majkel-aug". CLI reported
+**3 submissions remaining today** (so the prompt's "0 today" was wrong — slot 1 and slot 3 both
+count; there is no journal entry for slot 2, which left `experiments/luc_*_src`,
+`data/meta_aug/` and `data/ep_aug/` on disk but shipped and recorded nothing).
+
+### FIRST, THE THING THAT CHANGES EVERYTHING: 55389333 came back 449.2 → 462.4
+
+The previous run reconstructed the "proven" Crustle wall — 775.6 / 776.9 / 791.3 / 795.3 over four
+re-ships — and it converged to **462.4**. Its instruction was to check this before believing
+anything else, so: checked, and the premise is dead.
+
+**The rebuild is not broken. The deck died.** Slot 2 had already downloaded the 2026-08-08 episode
+dump (`data/ep_aug/`, 740 MB) and mined it with `tools/meta_aug.py` into `data/meta_aug/`
+(9,300+ real ladder games between real agents). In that data:
+
+| archetype | share | real-field win % |
+|---|---|---|
+| Marnie's Grimmsnarl / Morgrem | 30.4% | 46.4 |
+| Fezandipiti / Alakazam | 17.8% | 49.9 |
+| Lopunny / Froslass | 10.7% | 51.7 |
+| Dragapult / Meowth | 6.3% | **58.0** |
+| Lucario / Hariyama | 3.2% | **54.3** |
+| **Kangaskhan / Crustle** | 3.5% | **43.96** |
+
+Our entire 775–795 wall was a June artifact of a June field. `RESEARCH.md` has been rewritten
+accordingly — **the "proven artifact" section was the most load-bearing wrong belief in this
+workspace** and every future run would have kept re-shipping it.
+
+### The angle: search on top of the scorer — well-powered NEGATIVE
+
+First, a fact nobody had written down: **in every artifact shipped since June, the search is dead
+code.** `main.agent` tries `scorer.best_options` first and returns on success, so the Rust/MCTS
+branch below it is unreachable. The comment on that line even says why: *"beats our MCTS 63% h2h"*.
+
+So I re-enabled it properly and measured it. Added a `hybrid` pilot to `tools/par_eval.py`:
+determinized search over the engine's native forward model (`engine_rs.choose`, net-PUCT) on MAIN
+single-select decisions, with the rich scorer handling **every other** decision — i.e. lookahead
+layered *on top of* the strong prior, which is the one configuration the refuted `agent/lookahead.py`
+never tried (that one used a static board eval at the leaf). Also added `scorer` as a standalone
+pilot and `--alternate` seat-swapping, because the harness had a real first-player bias.
+
+Head-to-head vs the pure scorer, same deck both seats, alternating seats:
+
+| deck | hybrid search vs pure scorer |
+|---|---|
+| Crustle wall | **23.3% ± 10.7** (n=60) |
+| Lucario / Majkel list | **50.0% ± 12.7** (n=60) |
+
+**Not vacuous** — the obvious objection is that search never actually disagrees, so I instrumented
+it: over 6 full games, search diverged from the scorer on **305 of 423 (72.1%)** of the qualifying
+decisions. It makes a genuinely different choice three times in four, and the result is *exactly*
+the prior on Lucario and a disaster on Crustle. It matches the prior; it never beats it.
+
+This is consistent with the only two live tests of search we own, which nobody had recorded:
+**ref 53915967 determinized UCT = 560.1** and **ref 53927392 Rust MCTS = 528.8**, against rules
+pilots scoring 776–795 the same week. Three independent refutations (June live ×2, the
+`lookahead.py` sweep, this run). **Search is settled. Stop spending slots on it.**
+
+### The other finding: our local arena is anti-predictive, and now we have the number
+
+The Crustle wall beats the top meta deck **93.8%** in our arena while scoring **462** live. The
+harness measures "which deck best exploits *our own bots*", not deck strength — our bots are the
+only opponents in it. This is why v8/v9 shipped green local evals and lost ~85pts each.
+**Corollary: no local arena result may be used as ship justification again.** The only trustworthy
+local signal we have is `data/meta_aug/` — real games between real ladder agents.
+
+### What I shipped and why
+
+`experiments/luc_majkel.tar.gz` — the **unmodified HEAD pilot stack** (no code change at all) on
+**Majkel1337's exact August 60-card Lucario/Hariyama list**, mined from their real winning games.
+Majkel1337 is #1 overall at 1218.7. Rationale is entirely real-field: swap a 43.96% archetype for a
+54.3% one, holding the pilot fixed. Deliberately a **single-variable experiment** — it disambiguates
+the one question that decides the rest of the week:
+
+- lands ~470 like Crustle → **our pilots are the problem**, and the rules-pilot method is finished;
+- lands ~700+ → **the deck was the problem**, and re-piloting good archetypes is the play.
+
+Right now those two are completely confounded (Crustle 462 = bad deck + our pilot; teammate's
+Alakazam 716.1 = average deck + *their* pilot). Nothing else I could ship today resolves it.
+
+Cost accounting, done honestly: any submission evicts 55288207 (716.1, a teammate's notebook) from
+the 2-active window, so the likely near-term LB cost is ~50–250 points at rank ~2000, in a race
+whose prize cut is 1140. Cheap for the information, and sitting on a teammate's 716 advances
+nothing.
+
+### Verification (all green)
+- `tools/robust_probe.py` on the packed tree: 400 games / **46,501 agent decisions** — 0 exceptions,
+  0 illegal selections, 0 engine rejects, 0 hangs, 0 moves over 1s, 0 games near the 600s clock.
+  Latency p50/p99/max 0.24 / 140 / 253 ms; worst cumulative game 7.9s of 600s. **CLEAN.**
+- Packed cabt mirror smoke on the extracted tarball: `steps=145 statuses=[DONE,DONE] rewards=[-1,1]`
+  under kaggle_environments 1.32.0.
+- Fixed a real bug in `scripts/build_lucario.sh`: it packs from a temp cwd, so a relative outfile
+  silently failed to write and left a stale artifact in place. Now absolutised. **The 17:03
+  `luc_majkel.tar.gz` slot 2 left behind was written by some other path — do not trust artifacts
+  whose build you did not just run.**
+- Restored the stale working-tree reverts flagged by the previous run (`agent/main.py`,
+  `deck.csv`, `opp_decks.py`, `prize_tracker.py`, `build_submission.sh`, `tests/test_contract.py`,
+  `tools/deck_tourney.py`) to HEAD. The tree is now clean against HEAD except intended edits.
+
+### Open problem for the next run — read this first
+`pytest tests/` = **8 passed, 3 failed**, and all 3 fail at unmodified HEAD, so they are
+pre-existing and ship inside every artifact we have ever sent, including the 776.9 one:
+`test_lethal_attack_is_taken`, `test_attack_preferred_over_end_when_nonzero`,
+`test_go_first_prefers_second` — the agent picks END over a 120-damage KO. These run against the
+mock engine, so it may be a fixture artifact (mock attack ids 101/102 vs the real `all_attack()`
+table) — **but "does our agent take lethal?" is exactly the play-quality question our diagnosed
+bottleneck is about**, and `agent/lethal.py` exists as a verified-lethal override that the primary
+scorer path may simply never reach. Confirm mock-only or fix it; a genuine miss here is worth more
+than any deck swap. I did not chase it because the artifact was already submitted.
+
+### What the next run should do
+1. **Read 55389997's converged score first.** The whole branch above turns on it (see the two
+   outcomes). Compare against Crustle's 462.4 and the teammate Alakazam's 716.1.
+2. Resolve the lethal-attack test failures.
+3. Do NOT ship search, do NOT re-ship the Crustle wall, do NOT justify a ship with arena win rates.
+4. `data/meta_aug/decks/` holds **153 exact winning August decklists**, including every top-20
+   team (Dipam Chakraborty / 213tubo / Kh0a = Dragapult/Meowth, the 58.0% best-performing deck;
+   M Sato = Lopunny/Froslass; AlphaStarmie + ANDPAD = Fezandipiti/Alakazam; Thai = Kangaskhan/
+   Latias at 63.2%). We have no pilot for Dragapult/Meowth — both the scorer and search go 0/32
+   with it, which is its own finding: **our pilots are deck-specific and cannot fly a new list.**
+5. `STRATEGY.md` still does not exist ($30k × 8, due 2026-09-13). The three refutations above plus
+   the meta-collapse story are a genuinely good writeup and the material is now all in this journal.

@@ -48,3 +48,40 @@ on similar strong approaches. Worth identifying what `Majkel1337` / `M Sato` / `
 actually doing (`AlphaStarmie` naming hints at an AlphaZero-style Starmie pilot — we have a
 half-built self-play/MCTS stack in `net/`, `train/`, `engine_rs/` that was never proven to beat
 the BC baseline).
+
+## Update 2026-08-09 (late) — the wall fell out from under us
+
+| date | rank | score | active pair |
+|---|---|---|---|
+| 2026-08-09 21:20 | 2037 / 6678 | 716.1 | 55389333 crustle-proven (**462.4**) + 55288207 Codex Alakazam (716.1) |
+| 2026-08-09 21:30 | — | pending | 55389997 lucario-majkel-aug (**new**) + 55389333 (462.4) |
+
+**The reconstructed "proven" Crustle wall converged to 449.2 → 462.4, not 775–795.** The rebuild is
+faithful; the archetype is dead (Kangaskhan/Crustle = 43.96% in the 2026-08-08 real-field dump).
+See RESEARCH.md. Submitting 55389997 evicted the 716.1 — a deliberate, budgeted cost to run the
+single-variable deck-swap experiment (same pilot, 43.96% archetype → 54.3% archetype).
+
+## Field, 2026-08-09 late (top 10 of 6678) — and what they actually play
+
+| # | team | score | archetype (from the 08-08 dump) |
+|---|---|---|---|
+| 1 | Majkel1337 | 1218.7 | Lucario / Hariyama |
+| 2 | M Sato | 1190.2 | Lopunny / Froslass |
+| 3 | AlphaStarmie | 1180.4 | Fezandipiti / Alakazam |
+| 4 | palsystem | 1179.8 | Hydrapple / Teal Mask Ogerpon |
+| 5 | Dipam Chakraborty | 1174.3 | Dragapult / Meowth |
+| 6 | James Cox & Henry Chao | 1166.5 | Kangaskhan / Teal Mask Ogerpon |
+| 7 | Thai | 1158.9 | Kangaskhan / Latias |
+| 8 | Raihan Ramadistra | 1139.9 | — |
+| 9 | flg | 1133.7 | — |
+| 10 | @kdcyberdude | 1119.3 | — |
+
+Prize cut (top 8) ≈ **1140**. Field median 628.1; 50th place 1037.1.
+
+**The leaders do not share one deck** — seven different archetypes across the top seven. So the
+120-point-wide top of the board is not a deck secret; it is *piloting quality*. Their personal win
+rates (Dipam 66.3%, 213tubo 66.7%, M Sato 64.8%, Thai 62.9%) sit far above their own archetype's
+field average, i.e. they out-pilot everyone on ordinary decks. That is the gap, and it is not
+something a better decklist closes.
+
+`data/meta_aug/decks/` now holds all 153 lists, so any top team's exact deck is one `cp` away.

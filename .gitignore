@@ -43,3 +43,5 @@ engine_rs/target/
 data/episodes_daily/
 data/bc_top/
 data/leaderboard_*.csv
+data/ep_aug/
+experiments/

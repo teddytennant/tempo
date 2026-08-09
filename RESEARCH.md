@@ -40,10 +40,21 @@ kaggle competitions submissions -c pokemon-tcg-ai-battle -v | head -5   # verify
   21 GB) — those are not ours to delete. Keep this project's footprint small; a full disk shows up
   as opaque `ENOSPC` tool failures, not as a disk error.
 
-## THE PROVEN ARTIFACT (most important fact in this file)
+## THE PROVEN ARTIFACT IS DEAD — DO NOT RE-SHIP IT (superseded 2026-08-09)
 
-The best repeatable thing we own is the **Crustle ex-immune control wall**, 366-line
-`crustle_rules.py`. Live scores, same file re-shipped unmodified four times:
+> **Read this before the section below it.** The Crustle wall was re-shipped on 2026-08-09 as ref
+> `55389333`, faithfully rebuilt from git, and converged to **449.2 → 462.4** — not the 775–795 it
+> had drawn four times. The artifact is fine; **the archetype died.** In the 2026-08-08 ladder dump
+> (9,300+ real games, `data/meta_aug/`) Kangaskhan/Crustle wins **43.96%** (n=323). The 775–795 band
+> was a property of the *June* field and does not exist any more. Everything below is history.
+>
+> The general lesson is bigger than one deck: **a live score is a rating against the field of the
+> day, so it decays as the field improves.** Any score in this file older than ~2 weeks is an
+> upper bound, not a prediction. The whole rules-pilot library (Crustle, Starmie, Grimmsnarl,
+> Alakazam, Tusk, Iono...) is calibrated to a June meta.
+
+The best repeatable thing we owned was the **Crustle ex-immune control wall**, 366-line
+`crustle_rules.py`. Live scores, same file re-shipped unmodified four times *in the June/July field*:
 
 | ref | date | score |
 |---|---|---|
@@ -114,7 +125,10 @@ Do not spend further slots hunting crashes unless a submission actually errors.
 
 ## Pre-ship checklist
 
-1. `bash scripts/build_proven_crustle.sh` (or the relevant ship script) to produce the tarball.
+0. Justify the ship from **real-field** evidence (`data/meta_aug/`) or a live score — never from an
+   arena win rate — and check which active submission it will evict.
+1. Run the relevant ship/build script to produce the tarball, and confirm its mtime is *now*.
+   (`scripts/build_proven_crustle.sh` still works but the Crustle wall is a dead archetype.)
 2. `./scripts/run.sh -m tools.robust_probe --src <extracted> --games 1500` → must be CLEAN.
 3. Packed cabt smoke on the EXTRACTED tarball (catches loader-context bugs a module-import smoke
    cannot — e.g. `__file__` undefined under `exec`, which failed ref 54275057 outright):
@@ -123,3 +137,107 @@ Do not spend further slots hunting crashes unless a submission actually errors.
    steps = env.run([f"{d}/main.py", f"{d}/main.py"])   # both DONE, rewards not None
    ```
 4. End the day with the **two strongest** agents active, not the two most recent experiments.
+
+## The CURRENT metagame (mined 2026-08-09 from the 2026-08-08 episode dump)
+
+`data/ep_aug/pokemon-tcg-ai-battle-episodes-2026-08-08.zip` (740 MB) → `tools/meta_aug.py` →
+`data/meta_aug/{archetypes,matchups,teams}.csv` + `data/meta_aug/decks/` (**153 exact winning
+60-card lists, one per team, including every top-20 team**). ~9,300 decided real games between real
+ladder agents. **This is the only local signal we have that predicts anything** — see the arena
+warning below.
+
+| archetype | share | win % |
+|---|---|---|
+| Marnie's Grimmsnarl / Morgrem | 30.4% | 46.4 |
+| Fezandipiti / Alakazam | 17.8% | 49.9 |
+| Lopunny / Froslass | 10.7% | 51.7 |
+| **Dragapult / Meowth** | 6.3% | **58.0** |
+| Teal Mask Ogerpon / Hero's Cape | 3.7% | 45.7 |
+| **Kangaskhan / Crustle** | 3.5% | **43.96** ← our June wall |
+| **Lucario / Hariyama** | 3.2% | **54.3** ← Majkel1337 (#1, 1218.7) |
+| **Kangaskhan / Latias** | 2.7% | **63.2** ← Thai (#7) |
+
+Dragapult/Meowth is the standout: it beats Grimmsnarl 62.2% and Fezandipiti/Alakazam 69.2%, i.e.
+it beats **48% of the field**. Dipam Chakraborty (#5), 213tubo and Kh0a all play it at 66/67/59%
+personal win rates. We have **no pilot that can fly it** — see below.
+
+Regenerate after a new dump with:
+`./scripts/run.sh -m tools.meta_aug --zip data/ep_aug/*.zip --out data/meta_aug`
+
+## ⚠ OUR LOCAL ARENA IS ANTI-PREDICTIVE — never ship on an arena win rate
+
+Measured 2026-08-09: the Crustle wall beats the top meta deck (Grimmsnarl, real August list)
+**93.8%** in `tools/par_eval.py` while scoring **462** live. The arena's only opponents are *our own
+bots*, so it measures "which deck best exploits our heuristics", not strength. This is the
+mechanism behind every green-local/red-live regression in the section above (v8 −85, v9 −85, v7 −120).
+
+Ship justification must come from **real-field evidence** (`data/meta_aug/`) or from a live score.
+`tools/par_eval.py` is still the right tool for *robustness* and for **paired same-deck A/B of two
+policies**, which is a relative question — just not for absolute strength or deck choice.
+It now also has `--alternate` (seat-swapping; there was a real first-player bias) and two extra
+pilots: `scorer` (the prior alone) and `hybrid` (search over the prior).
+
+## SEARCH IS SETTLED — it does not beat the heuristic scorer. Stop trying. (2026-08-09)
+
+**In every artifact shipped since June the search is dead code**: `main.agent` calls
+`scorer.best_options` first and returns on success, so the Rust/MCTS branch below is unreachable.
+The comment on that line explains it: *"beats our MCTS 63% h2h"*.
+
+Re-enabled and measured properly as the `hybrid` pilot — determinized net-PUCT search over the
+engine's native forward model on MAIN single-selects, rich scorer on **every other** decision
+(lookahead layered *on top of* the prior; the configuration `agent/lookahead.py` never tried, since
+that one used a static board eval at the leaf). Paired, same deck both seats, alternating seats:
+
+| deck | hybrid search vs pure scorer |
+|---|---|
+| Crustle wall | 23.3% ± 10.7 (n=60) |
+| Lucario / Majkel list | 50.0% ± 12.7 (n=60) |
+
+Not vacuous — instrumented over 6 full games, search **diverges from the scorer on 305/423 (72.1%)**
+of qualifying decisions. It makes a different choice 3 times in 4 and still only *matches* the prior.
+
+Four independent refutations now:
+1. ref `53915967` determinized UCT, 6s/move = **560.1** live (vs 776–795 rules pilots that week)
+2. ref `53927392` Rust MCTS core, native 10× sims = **528.8** live
+3. the `agent/lookahead.py` sweep (see its docstring — a rigorous negative, ~38–42%)
+4. this run's `hybrid` A/B above
+
+Mechanism (from the `lookahead.py` post-mortem, and it still applies): strategy fusion / phantom
+lethals from determinized draws, plus a leaf evaluation weaker than the scorer's implicit tempo
+knowledge. **Do not spend another slot on search depth without a fundamentally different value
+function.**
+
+## Our pilots are deck-SPECIFIC and cannot fly an unfamiliar list (2026-08-09)
+
+Piloting Dipam Chakraborty's real Dragapult/Meowth list (the 58.0% best deck in the field):
+scorer **0/32**, hybrid search **0/32**, floor 0/32, random 0/32 vs the scorer on Grimmsnarl —
+while the *mirror* is ~44%, so the deck itself functions. Every one of our specialists
+(`crustle_rules.py`, `lucario_rules.py`, `starmie_rules.py`, ...) is hand-written for one archetype,
+and `scorer.py` dispatches to them by deck detection; with no specialist the generic path cannot
+assemble a Stage-2 evolution combo deck. **Adopting a strong new archetype therefore costs a whole
+new specialist**, which historically lands 638–776 in the June field. This is the central structural
+problem with the method.
+
+## Active-slot arithmetic (easy to get wrong, costs real LB points)
+
+Only the **2 most recent** submissions are active and the LB shows the best of them. So every new
+submission **evicts the older of the two currently active**. Before submitting, check what you are
+about to evict — on 2026-08-09 a submission evicted `55288207` (716.1, a teammate's Alakazam
+notebook we cannot rebuild), leaving the new entry paired with the 462.4 Crustle. Budget this
+explicitly; end the day with the two strongest agents active.
+
+## Build-script hazard
+
+`scripts/build_lucario.sh` packs from a temp cwd, so a **relative** outfile silently failed to write
+and left a stale artifact in place (fixed 2026-08-09 by absolutising `OUT`). Generally: never trust
+a `.tar.gz` whose build you did not just run — check its mtime.
+
+## Known-failing tests (pre-existing at HEAD, ship inside every artifact)
+
+`./scripts/run.sh -m pytest tests/` → **8 passed, 3 failed** at unmodified HEAD:
+`test_lethal_attack_is_taken`, `test_attack_preferred_over_end_when_nonzero`,
+`test_go_first_prefers_second` — the agent picks END over a 120-damage KO. Runs against the mock
+engine (`tests/mock_cg`), so it may be a fixture artifact (mock attack ids 101/102 vs the real
+`all_attack()` table) — but it is unresolved, and `agent/lethal.py` (verified-lethal override) may
+simply never be reached on the primary scorer path. Worth confirming: play quality is the diagnosed
+bottleneck. `pytest` is not in `.venv` by default — `uv pip install --python .venv/bin/python pytest`.
