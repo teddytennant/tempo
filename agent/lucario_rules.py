@@ -69,13 +69,50 @@ WILD_PRESS = 978          # Hariyama, 3 F, 210 dmg (70 recoil)
 # The opponent's Crustle wall (Stage-1, 345) negates damage from ex/Mega-ex attacks.
 CRUSTLE = 345
 
-# Full 60-card decklist (used by the lethal verifier's determinization while piloting Lucario).
-LUCARIO_DECK = (
+# Full 60-card decklist, used by the lethal verifier (scorer.py) to determinize the unseen part
+# of our deck while it searches for a game-winning line this turn.
+#
+# It MUST be the list we are actually piloting. The reference list below is the one this module
+# was written against; when we swap to another team's Lucario build (currently Majkel1337's exact
+# August list) the two diverge — that build differs from the reference on 16 of 60 cards (Ultra
+# Ball / Judge / Wally's Compassion in, Dusk Ball / Carmine / Gravity Mountain out). A verifier
+# determinizing from the wrong list can "prove" a lethal that draws a card we do not own, which is
+# precisely the impossible-line failure the belief correction in lethal.py exists to prevent — and
+# that path decides whether we actually close out won games. So read the bundled deck.csv (the
+# single source of truth the build script writes) and fall back to the reference list only if it
+# cannot be read.
+_REFERENCE_DECK = (
     [MAKUHITA] * 2 + [HARIYAMA] * 2 + [LUNATONE] * 2 + [SOLROCK] * 3 + [RIOLU] * 3 + [MEGA_LUCARIO] * 4
     + [DUSK_BALL] * 4 + [SWITCH] * 2 + [PREMIUM_POWER_PRO] * 4 + [FIGHTING_GONG] * 4 + [POKE_PAD] * 4
     + [HEROS_CAPE] + [BOSS_ORDERS] * 2 + [CARMINE] * 4 + [LILLIE] * 4 + [GRAVITY_MOUNTAIN] * 2
     + [BASIC_F] * 13
 )
+assert len(_REFERENCE_DECK) == 60
+
+
+def _load_piloted_deck():
+    """The 60 ids in the bundled deck.csv, or None if it is missing/unreadable/not 60 cards."""
+    import os as _os
+    cands = []
+    try:
+        cands.append(_os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "deck.csv"))
+    except Exception:
+        pass
+    cands += ["deck.csv", "/kaggle_simulations/agent/deck.csv"]
+    for p in cands:
+        try:
+            if not _os.path.exists(p):
+                continue
+            with open(p) as f:
+                ids = [int(x) for x in f.read().splitlines() if x.strip()]
+            if len(ids) == 60:
+                return ids
+        except Exception:
+            continue
+    return None
+
+
+LUCARIO_DECK = _load_piloted_deck() or list(_REFERENCE_DECK)
 assert len(LUCARIO_DECK) == 60
 
 # At least one of these is always on our side (we must have an Active Pokemon) and none of them
