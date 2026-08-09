@@ -389,3 +389,14 @@ fires correctly on 112 game-winning decisions; only 1.0% premature attacks). The
    strong: four independent refutations of search, the arena anti-predictiveness result with a
    number, the meta-collapse story, and now a real-field agreement harness plus a double-negative on
    prize-trade economics. **This is the highest-value unclaimed thing in the workspace.**
+
+**Addendum (same run, ~22:15 UTC):** `55390373` is `SubmissionStatus.COMPLETE` (the self-play
+validation game passed, so the packed tree runs clean on Kaggle) with an initial reading of
+**506.8**, i.e. still near the 600 entry rating and not converged. In the same read `55389997`
+moved 559.1 → **596.5**, which is the third direction change for that ref today and is exactly the
+volatility documented at the top of this entry. **No conclusion should be drawn from either number
+yet.** Active pair is 55390373 + 55389997; 2 submissions remain today.
+
+**Note for whoever takes slot 5:** a further submission evicts `55389997`. Given the swings above,
+do not do that unless the candidate is justified on grounds independent of today's readings — and
+prefer leaving the slot unused over spending it to chase a number that is still moving.
