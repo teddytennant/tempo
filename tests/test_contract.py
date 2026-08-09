@@ -40,14 +40,16 @@ def test_deck_selection_via_observation_none_select():
 
 
 # ── core in-game prompts ──────────────────────────────────────────────────────
-def test_go_first_prefers_second():
-    # The scorer deliberately declines going first (setup/reactive decks want the extra
-    # information and the first attack turn) — see scorer._score_sub IS_FIRST handling.
+def test_go_first_is_accepted():
+    # This used to assert the opposite ("setup/reactive decks want the extra information"), which
+    # was never measured and has now been refuted twice: real ladder players answered YES in 91 of
+    # 93 IS_FIRST positions in the 2026-08-08 dump, and a forced mirror A/B over 2,200 games
+    # (tools/first_turn_ab.py) put the player who went first at 54.0% +/- 2.1.
     sel = cg.Select(option=[cg.Option(cg.OptionType.YES), cg.Option(cg.OptionType.NO)],
                     context=cg.SelectContext.IS_FIRST, minCount=1, maxCount=1)
     out = main.agent({"current": _state(), "select": sel})
     _assert_legal(out, sel)
-    assert out == [1]  # NO -> go second
+    assert out == [0]  # YES -> go first
 
 
 def test_lethal_attack_is_taken():
