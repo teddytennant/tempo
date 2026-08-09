@@ -233,7 +233,19 @@ def _energy_count(p) -> int:
 
 
 def is_lucario_deck(state, me_i: int) -> bool:
-    """True if our side is piloting the Mega Lucario line (a 673-678 Pokemon is visible on our side)."""
+    """True if our side is piloting the Mega Lucario line (a 673-678 Pokemon is visible on our side).
+
+    Detection is by *visible* cards, which is right once the game is under way but leaves a hole at
+    the very first decision of the game: "would you like to go first?" (SelectContext.IS_FIRST) is
+    asked before the opening hand is dealt, so our side is completely empty and every archetype
+    specialist gets bypassed for the one decision that sets the tempo of the whole game. Measured on
+    the 2026-08-08 ladder dump, that hole fired on 93 of 93 real IS_FIRST positions.
+
+    We do not have to infer our archetype from the board there — we ship the decklist. So when
+    nothing at all is visible on our side, fall back to the bundled deck.csv (LUCARIO_DECK). This
+    can only fire on an empty board, i.e. before the opening hand exists; in every other position
+    the visible-card test below is unchanged.
+    """
     try:
         me = state.players[me_i]
         if me.active:
@@ -249,6 +261,8 @@ def is_lucario_deck(state, me_i: int) -> bool:
         for c in (me.discard or []):
             if _id(c) in _SIGNATURE:
                 return True
+        if not (me.active or me.bench or me.hand or me.discard):
+            return any(cid in _SIGNATURE for cid in LUCARIO_DECK)
     except Exception:
         return False
     return False
@@ -627,6 +641,11 @@ def score_sub(obs, o, me_i, context) -> float:
     wall = _opp_active_ex_immune(state, me_i)
 
     # Turn order: an aggressive deck wants to go FIRST to start the Riolu->Mega clock a turn sooner.
+    # Corroborated two ways on 2026-08-09: real ladder Lucario players answered YES in 91 of 93
+    # IS_FIRST positions in the 2026-08-08 dump, and a forced mirror A/B (tools/first_turn_ab.py)
+    # put the player who went first at ~52% over 1000 games. scorer._score_sub says the opposite
+    # ("going second is often better for a setup deck") and used to win by default, because
+    # is_lucario_deck could not see an empty board — see the note there.
     if t == OptionType.YES:
         return score + (150.0 if context == SelectContext.IS_FIRST else 100.0)
     if t == OptionType.NO:
