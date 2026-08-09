@@ -85,3 +85,23 @@ field average, i.e. they out-pilot everyone on ordinary decks. That is the gap, 
 something a better decklist closes.
 
 `data/meta_aug/decks/` now holds all 153 lists, so any top team's exact deck is one `cp` away.
+
+## 2026-08-09 slot 4 — our own standing, and a caution about reading it
+
+Active pair after this run: `55390373` (luc_majkel_v2, pending) + `55389997` (luc_majkel).
+`55389333` (Crustle wall) was evicted at 540.1.
+
+**Our refs move by >200 points within hours of submitting** — `55389997` read 698.6, then 775.6,
+then 559.1 inside a single afternoon; `55389333` read 449.2 → 462.4 → 506.0 → 540.1 over the same
+window. Any standing recorded here that is less than ~a day old is a snapshot of a converging
+rating, not a result. Re-read before comparing two refs, and never evict a slot on a fresh number.
+
+This also means the slot-3 headline ("+190 live from the decklist swap alone") is **unconfirmed**:
+it was computed at one ref's transient peak, and at the latest readings the same pair sits ~19
+points apart. Still the leading hypothesis, but the next run must re-read both refs after they
+settle before building on it.
+
+The note above still stands and is reinforced: the top seven play seven different archetypes, so
+the ~400pt gap to the prize cut is piloting quality, not a decklist secret. Confirmed from a second
+direction this run — Thwackey/Dipplin (59.5% real-field) goes 10.4% under our *generic* pilot,
+i.e. archetype strength does not transfer without a hand-written specialist.

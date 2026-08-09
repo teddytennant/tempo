@@ -247,3 +247,145 @@ Grimmsnarl 46.4 (`grimmsnarl_rules.py`, 30% of the field so the most-played matc
 Kangaskhan/Latias (63.2%) and Dragapult/Meowth (58.0%) are the two best decks in the format and we
 have **no pilot for either** — building one is a bigger, better bet than another list swap, and the
 0/32 result above says the generic path cannot substitute for it.
+
+---
+
+## 2026-08-09 — slot 4/5 — ANGLE: prize-trade economics (KOs, prize counts, when to trade)
+
+**Submitted:** ref `55390373` `luc_majkel_v2.tar.gz` — "slot4 luc-majkel-v2". CLI reported
+**2 submissions remaining today.** Evicted `55389333` (the Crustle wall), so the active pair is
+now 55390373 + 55389997.
+
+### FIRST — read this before trusting any score in this journal
+
+Live ratings swing enormously while converging, and this run watched it happen to a single ref:
+
+| ref 55389997 (Lucario/Majkel) | reading |
+|---|---|
+| ~45 min after submit (slot 3 addendum) | 698.6 |
+| start of this run (~21:40 UTC) | **775.6** |
+| end of this run (~22:05 UTC) | **559.1** |
+
+Meanwhile `55389333` (Crustle) went 489.2 → 506.0 → 540.1 over the same window. **A reading taken
+within hours of submitting is not a converged score, and the swing is >200 points.** The slot-3
+entry's "+190 from the decklist alone" conclusion was drawn at the 698.6/775.6 readings; on the
+current readings that gap is ~19 points, not 190. The deck-swap result is therefore **NOT yet
+established** — it is still the best hypothesis we have, but the next run must re-read both refs
+after they settle before building on it. I have flagged this in RESEARCH.md too.
+
+### The angle: prize-trade economics — a well-powered DOUBLE NEGATIVE
+
+Built `tools/prize_agreement.py`, which is the durable output of this run. It replays real
+decisions by frontier Lucario players (4,074 winning decisions from the 2026-08-08 ladder dump,
+`data/bc_lucario/records_11447.jsonl`) through the **deploy entry point** and reports agreement per
+decision type. 99.1% of the corpus routes through `lucario_rules`, so it measures the shipping code
+path, and it takes `--src` so two packed trees are scored on identical decisions. **This is the
+arena replacement we have needed since the arena was shown to be anti-predictive** — it is
+real-field, and it answers *relative* policy questions.
+
+Baseline on the shipped agent:
+
+| bucket | n | agree |
+|---|---|---|
+| all | 4074 | 52.9% |
+| main | 2530 | 45.5% |
+| main/attack-available | 1712 | 39.1% |
+| **main/swing-or-end** | 75 | **88.0%** |
+| main/attack-choice | 604 | 36.4% |
+| other (sub-selects) | 1502 | 64.9% |
+
+**(a) At the policy level, prize-trade is already elite-consistent.**
+- On *pure* swing-or-end decisions (options are only ATTACK/END/RETREAT, so the "we developed first
+  and attacked later" confound cannot apply) we agree **88.0%**.
+- Among decisions with ≥2 attacks where the elite attacked, we pick a *different attack* only
+  **6 times in 133** — 3 each way, i.e. noise. Attack selection is fine.
+- 149 decisions look like "we attacked, the elite kept developing". I instrumented each one:
+  **124 are correct** — 112 where `lethal.py`'s verifier proved a game-winning line and 12 where the
+  scorer's own game-winning-swing branch fired. Only **25 of 2,530 MAIN decisions (1.0%)** are
+  genuinely premature, and **15 of those 25 are one card** (Premium Power Pro, which our pilot
+  scores −1 unless its +30 exactly converts a KO). I did not "fix" that: without card text in the
+  engine DB I cannot tell whether the elites or our rule are right, and guessing on top of our only
+  good artifact is precisely the v8/v9 failure mode.
+
+**(b) At the deck level, prize liability does not predict winning.** Across the 17 archetypes with
+≥100 games in `data/meta_aug/`, joined to their teams' real decklists:
+`corr(win%, max prize liability of the deck) = **−0.13**` (nothing) and
+`corr(win%, number of multi-prize Pokemon) = **+0.54**` — decks carrying *more* 2/3-prize threats
+win *more*. So our 3-prize Mega Lucario ex is not a prize-trade handicap, and "build a low-prize
+deck" is a dead idea. Killed before it cost a future run a slot.
+
+**(c) The documented prize guard is WRONG, and it is good that it was never implemented.**
+`lucario_rules.py`'s header has promised since it was written: *"Prize guard: when we are at our
+last 2-3 prizes, do not over-expose the 3-prize Mega-ex."* `_my_prize_count` was defined and never
+called. I implemented it (don't volunteer the Mega-ex to the active spot when the opponent is
+within its prize value of winning) and ablated it on the same 4,074 decisions with an env-var
+switch: it moved **9 decisions away from elite play and 0 toward it** (other 64.85% → 64.25%),
+with both rules off reproducing the baseline exactly. **Reverted, not shipped.** Mechanism: Lucario
+is a one-attacker aggro deck — refusing to promote the Mega just forfeits tempo, and the elites
+promote it anyway. A companion rule (+4000 to a KO target whose prize value takes our last prizes)
+was a measured **no-op** — it never changed a decision — so it was reverted too.
+
+### What I did ship: a real correctness bug on the game-closing path
+
+`lucario_rules.LUCARIO_DECK` is handed to the multi-step lethal verifier (`scorer.py:521`) as its
+**determinization deck** — it is the module's only consumer. It was a hardcoded reference list.
+Since slot 3 we pilot Majkel1337's exact August list, and the two differ on **16 of 60 cards**
+(Ultra Ball / Judge / Wally's Compassion in; Dusk Ball / Carmine / Gravity Mountain out). So the
+verifier that decides *"can I take my last prizes this turn"* has been searching a deck we do not
+own, free to prove a lethal that draws a Dusk Ball we have zero of — the same impossible-line
+failure the belief correction inside `lethal.py` exists to prevent. That path fired on **112** of
+the corpus decisions, i.e. it is the component that actually closes out won games.
+
+Fixed by reading the bundled `deck.csv` at import (fallback to the reference list on any failure),
+so **the mismatch cannot recur when we swap lists** — which matters because list-swapping is
+currently our main lever.
+
+Measured A/B on identical decisions, shipped tree vs fixed tree:
+all 52.87% → **52.92%**, main 45.45 → 45.53, attack-available 38.96 → 39.08, attack-choice
+36.26 → 36.42, **no bucket regressed**. Small in aggregate because the verifier only fires in
+endgames; but it is a correctness fix, it is strictly non-negative on real play, and it is
+structural rather than a tuning guess.
+
+### Also measured, not shipped
+**Thwackey / Dipplin** — the format's only *pure single-prize* archetype (Sixth Sense's list: 60
+cards, every Pokémon Stage-0/Stage-1, zero ex; `maxPrize 1.0`, `multiPz 0.0`), 59.5% real-field win
+rate. The obvious prize-trade deck, and unlike Dragapult it has no Stage-2 line, so the "generic
+path cannot assemble a Stage-2 combo" failure should not apply. It doesn't: it goes **10.4% ± 8.6
+(n=48, alternating seats)** under our generic pilot against our own Lucario specialist. The deck
+functions (it is not the 0/32 Dragapult result) but we cannot fly it. Deck saved at
+`data/decks/thwackey_sixthsense.csv`. **Restates the central structural problem: a strong archetype
+is worthless to us without a hand-written specialist.**
+
+### Verification (all green)
+- `tools/robust_probe.py` on the packed tree: 400 games / **46,929 agent decisions** — 0 exceptions,
+  0 illegal selections, 0 engine rejects, 0 hangs, 0 moves over 1s, 0 games near the 600s clock.
+  Latency p50/p99/max 0.28 / 187 / 261 ms; worst cumulative game 5.2s of 600s. **CLEAN.**
+- Packed cabt mirror smoke on the EXTRACTED tarball: `steps=127 statuses=[DONE,DONE] rewards=[-1,1]`
+  under kaggle_environments 1.32.0.
+- `pytest tests/` → 8 passed, the same 3 pre-existing failures, none new.
+
+### Open: the 3 failing tests are STILL unresolved
+`test_lethal_attack_is_taken`, `test_attack_preferred_over_end_when_nonzero`,
+`test_go_first_prefers_second`. The previous run flagged them as the top open question. This run
+gives strong evidence they are a **mock-fixture artifact, not a real bug**: against the real engine
+on real elite positions we take lethal correctly (88% swing-or-end agreement; the lethal verifier
+fires correctly on 112 game-winning decisions; only 1.0% premature attacks). They still deserve a
+30-minute confirmation, but they are no longer a plausible explanation for our ladder position.
+
+### What the next run should do FIRST
+1. **Re-read `55390373` AND `55389997` after they settle**, and treat the slot-3 "+190 deck swap"
+   conclusion as unconfirmed until you do. Scores moved 775.6 → 559.1 on one ref inside this run.
+   Do not evict an active slot on the strength of a fresh reading.
+2. **Do not spend another slot on prize-trade economics.** Policy-level 88%/1.0%, deck-level
+   r=−0.13, and the documented prize guard measured negative. It is closed.
+3. `tools/prize_agreement.py` is now the way to justify a policy change. Use `--src` to A/B packed
+   trees. It only covers Lucario decisions; extending it to other archetypes needs a corpus for them
+   (`tools/harvest_lucario.py` is the template).
+4. The unexploited lever remains **a specialist for a top archetype we cannot currently fly**
+   (Kangaskhan/Latias 63.2%, Dragapult/Meowth 58.0%, Thwackey/Dipplin 59.5%). That is a multi-run
+   build, not a slot-filler, and it is the only thing on the table that plausibly closes the ~400pt
+   gap to the prize cut.
+5. `STRATEGY.md` still does not exist ($30k × 8, due 2026-09-13). The material is now genuinely
+   strong: four independent refutations of search, the arena anti-predictiveness result with a
+   number, the meta-collapse story, and now a real-field agreement harness plus a double-negative on
+   prize-trade economics. **This is the highest-value unclaimed thing in the workspace.**

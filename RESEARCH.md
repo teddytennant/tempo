@@ -12,6 +12,20 @@ Durable facts. Anything learned the expensive way goes here so no future run pay
 - Leaderboard shows the **best of your 2 most recent (active) submissions**. Older ones stop
   counting entirely — a strong artifact that has scrolled out of the top 2 contributes nothing.
 
+## ⚠ LIVE SCORES SWING >200 POINTS WHILE CONVERGING — never conclude from a fresh reading
+
+Watched on a single ref inside one run (2026-08-09, `55389997`): **698.6 → 775.6 → 559.1** over a
+few hours. `55389333` moved 449.2 → 462.4 → 506.0 → 540.1 in the same window. A score read within
+hours of submitting is *not* converged.
+
+Consequences, all learned the expensive way:
+- **Do not evict an active slot** on the strength of a fresh reading of its replacement.
+- **Do not draw an A/B conclusion** from two refs read at different ages. The slot-3 "deck swap is
+  worth +190" claim was computed at one ref's transient peak; on later readings the same pair is
+  ~19 points apart. It is still the best hypothesis we have, but it is **unconfirmed**.
+- RESEARCH.md's older "±10 between identical re-ships" figure was measured on *settled* June
+  scores. It does not apply to same-day readings.
+
 ## Submission mechanics (verified working 2026-08-09)
 
 ```bash
@@ -241,3 +255,64 @@ engine (`tests/mock_cg`), so it may be a fixture artifact (mock attack ids 101/1
 `all_attack()` table) — but it is unresolved, and `agent/lethal.py` (verified-lethal override) may
 simply never be reached on the primary scorer path. Worth confirming: play quality is the diagnosed
 bottleneck. `pytest` is not in `.venv` by default — `uv pip install --python .venv/bin/python pytest`.
+
+
+## Real-field agreement harness — `tools/prize_agreement.py` (built 2026-08-09)
+
+**The replacement for the anti-predictive arena for *relative policy* questions.** Replays real
+decisions by frontier players through the deploy entry point and reports agreement per decision
+type. Takes `--src`, so two packed trees are scored on identical decisions.
+
+```bash
+./scripts/run.sh -m tools.prize_agreement --src experiments/<build>_src --json out.json
+```
+
+Corpus: `data/bc_lucario/records_11447.jsonl` = 4,074 *winning* decisions by frontier Lucario
+players from the 2026-08-08 dump (harvested by `tools/harvest_lucario.py`). **99.1% of it routes
+through `lucario_rules`**, so it measures the shipping code path. It is Lucario-only; another
+archetype needs its own corpus.
+
+Shipped-agent baseline: all **52.9%** (n=4074), main 45.5%, attack-available 39.1%,
+**swing-or-end 88.0%**, attack-choice 36.4%, sub-selects 64.9%.
+
+Caveat that matters: single-decision agreement **over-penalises benign turn ordering** (playing a
+card then attacking scores as a disagreement with an elite who attacked immediately). Judge policy
+changes on the confound-free buckets — `main/swing-or-end`, `main/attack-choice` — and on whether
+any bucket *regresses*.
+
+## PRIZE-TRADE ECONOMICS IS SETTLED — it is not our bottleneck (2026-08-09)
+
+Measured at both levels; do not spend another slot here.
+
+1. **Policy.** Pure swing-or-end decisions: **88.0%** agreement with elites. Multi-attack decisions:
+   we pick a different attack **6 times in 133**. Of 149 "we attacked, elite developed" spots, **124
+   are correct** (112 lethal-verifier-proved wins + 12 scorer game-winning swings); only **25 of
+   2,530 MAIN decisions (1.0%)** are genuinely premature, **15 of them one card** (Premium Power
+   Pro, scored −1 unless its +30 exactly converts a KO — unresolved, the engine DB exposes no card
+   text so I could not tell whether our rule or the elites are right).
+2. **Deck.** Over the 17 archetypes with ≥100 games joined to real decklists:
+   `corr(win%, max prize liability) = −0.13`, `corr(win%, # multi-prize Pokemon) = **+0.54**`.
+   Decks with *more* 2/3-prize threats win *more*. "Build a low-prize deck" is dead; our 3-prize
+   Mega-ex is not a handicap.
+3. **The documented prize guard is wrong.** `lucario_rules.py`'s header promised a guard against
+   over-exposing the 3-prize Mega-ex; `_my_prize_count` was defined and never called. Implemented
+   and ablated on the 4,074 decisions: **9 decisions moved away from elite play, 0 toward it.**
+   Reverted. Lucario is a one-attacker aggro deck — elites promote the Mega anyway. A companion
+   "KO that takes our last prizes" bonus was a measured **no-op**.
+
+## Keep a specialist's decklist bound to the deck we actually ship (fixed 2026-08-09)
+
+`lucario_rules.LUCARIO_DECK` is the determinization deck for the multi-step lethal verifier
+(`scorer.py:521` — its only consumer). It was hardcoded, so piloting Majkel1337's list left the
+verifier searching a deck differing on **16 of 60 cards**, free to prove a lethal that draws a card
+we own zero of. Now loaded from the bundled `deck.csv` with a fallback. **Every specialist with a
+`*_DECK` constant has this latent bug — check before shipping that archetype on a new list.**
+
+## Thwackey / Dipplin — the pure single-prize deck, and we cannot fly it (2026-08-09)
+
+Sixth Sense's list (`data/decks/thwackey_sixthsense.csv`): 60 cards, every Pokémon Stage-0/Stage-1,
+**zero ex**, 59.5% real-field win rate, no Stage-2 line (so the Dragapult failure mode shouldn't
+apply). Under the **generic** pilot vs our Lucario specialist: **10.4% ± 8.6 (n=48, alternating
+seats)**. It functions — this is not the 0/32 Dragapult result — but the generic path plays it far
+below specialist level. Restates the structural problem: **a strong archetype is worthless without a
+hand-written specialist**, and that is the only remaining lever big enough to matter.
