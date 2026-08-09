@@ -316,3 +316,71 @@ apply). Under the **generic** pilot vs our Lucario specialist: **10.4% ± 8.6 (n
 seats)**. It functions — this is not the 0/32 Dragapult result — but the generic path plays it far
 below specialist level. Restates the structural problem: **a strong archetype is worthless without a
 hand-written specialist**, and that is the only remaining lever big enough to matter.
+
+## ⚠ SPECIALIST DISPATCH IS BLIND BEFORE THE BOARD EXISTS (found 2026-08-09, fixed for Lucario only)
+
+`scorer.best_options` picks an archetype specialist by calling `is_<archetype>_deck(state, me_i)`,
+and **every one of those detects the archetype from cards VISIBLE on our side.** At
+`SelectContext.IS_FIRST` (41, "would you like to go first?") the question is asked *before the
+opening hand is dealt*: active, bench, hand and discard are all empty. Detection returns False, the
+specialist is bypassed, and generic `scorer._score_sub` decides.
+
+Measured on the 2026-08-08 dump: this fired on **93 of 93** real IS_FIRST positions.
+
+The generic rule it fell through to was never measured — *"going second is often better for a setup
+deck"* — and it is **wrong**:
+
+- **Real field:** real ladder Lucario players answered YES (go first) in **91 of 93** positions.
+- **Causal, in-engine** (`tools/first_turn_ab.py`, mirror games, identical deck and policy on both
+  seats, only the turn-order answer forced, arm- and seat-swapped): over **2,200 games the player
+  who went first won 54.0% ± 2.1 (z=3.7, p≈0.0002)**. Split by arm: asked player won 51.8%/56.0%
+  forced-first vs 47.0%/45.5% forced-second.
+
+Worse, the repo held **three conflicting opinions** and the untested one won:
+`scorer._score_sub` NO, `lucario_rules.score_sub` YES +150, `main.py` fallback YES. The specialists'
+preference was **dead code in every artifact ever shipped, including the 776.9 Crustle wall** — so
+every historical score in this file was set while conceding the first turn.
+
+**Fix applied to `lucario_rules.is_lucario_deck` only:** when nothing at all is visible on our side,
+fall back to the bundled `deck.csv` (we ship the decklist — there is no need to infer it). The guard
+requires active, bench, hand AND discard simultaneously empty, so it can only fire before the
+opening hand exists and no in-game decision changes. IS_FIRST agreement 2.2% → **97.8%**; paired on
+4,074 elite decisions no bucket regressed (all 52.90 → 53.73).
+
+**STILL BROKEN for every other specialist** (`crustle`, `grimmsnarl`, `starmie`, `tusk`,
+`fezandipiti`, `dunsparce`, `iono`, `cinderace`, `hops_snorlax`). Apply the same fallback before
+shipping any of them.
+
+**The general lesson:** any decision taken before the board reveals the archetype is decided by
+untested generic defaults. `SelectContext.MULLIGAN` (42) is the next candidate and has never been
+checked — it does not appear in our corpus at all.
+
+## ENERGY / TEMPO SEQUENCING INSIDE THE TURN IS SETTLED — not our bottleneck (2026-08-09)
+
+- **Attach targeting is right.** Raw agreement makes `main/attach-to-bench` look like a disaster at
+  **18.6%** — that is the turn-ordering confound (we play a card first, attach later in the turn).
+  Restricted to decisions where the elite *and* we both attached at the same point (`tools/
+  attach_probe.py`), area agreement is **89.8% (149/166)**; we put energy on the bench **37.3%** of
+  the time vs the elites' **40.4%**.
+- **We do not waste the once-per-turn resources.** `tools/turn_audit.py` over full games:
+  **wasted_attach 3.6%**, **wasted_bench 3.0%**, **retreat-then-no-attack 0.6%** of turns.
+- **The attacks that skip an attach are correct.** All **24** real positions where the elite
+  attached and we swung are **KO swings, 14 provably taking the opponent's last prizes**.
+
+## New instruments (2026-08-09, all take `--src` for two-tree A/B)
+
+| tool | what it answers |
+|---|---|
+| `tools/tempo_agreement.py` | agreement bucketed for energy/retreat/bench + confusion tables |
+| `tools/attach_probe.py` | attach-target choice with the turn-ordering confound removed |
+| `tools/turn_audit.py` | **whole-TURN** audit: resources left unspent at the turn-ending decision |
+| `tools/first_turn_ab.py` | forced mirror A/B of a single binary once-per-game decision |
+
+`turn_audit.py` is the first instrument that scores turns rather than single decisions — both
+agreement harnesses are structurally blind to "ended the turn without spending the attachment".
+
+**HAZARD:** the repo's `agent/deck.csv` is NOT the list we ship (it is a different archetype), so a
+tool that defaults to it silently routes through the *generic* pilot and every number is garbage —
+this produced a fake "35.9% of turns waste the bench" that evaporated on the right list.
+`turn_audit.py` and `first_turn_ab.py` prefer the packed tree's own `agent/deck.csv` and **print the
+deck path they used — check it.**

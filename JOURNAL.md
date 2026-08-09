@@ -400,3 +400,134 @@ yet.** Active pair is 55390373 + 55389997; 2 submissions remain today.
 **Note for whoever takes slot 5:** a further submission evicts `55389997`. Given the swings above,
 do not do that unless the candidate is justified on grounds independent of today's readings — and
 prefer leaving the slot unused over spending it to chase a number that is still moving.
+
+---
+
+## 2026-08-09 — slot 5/5 — ANGLE: energy and tempo (attachment, retreat, bench sequencing)
+
+**Submitted:** ref `55390639` `luc_majkel_v3.tar.gz` — "slot5 luc-majkel-v3". CLI reported
+**1 submission remaining today.** Evicted `55389997` (v1), so the active pair is
+**55390373 (v2) + 55390639 (v3)**.
+
+### The headline: the tempo leak is not inside the turn, it is the decision made before it
+
+`SelectContext.IS_FIRST` ("would you like to go first?") is asked once per game, before the opening
+hand is dealt. **We answered NO — decline to go first — in 93 of 93 real positions. Real ladder
+Lucario players answered YES in 91 of 93.** Agreement 2.2%.
+
+**Root cause, and it is structural, not a tuning miss.** `scorer.best_options` dispatches to an
+archetype specialist via `lucario_rules.is_lucario_deck()`, which detects the archetype from cards
+*visible on our side*. At IS_FIRST our active/bench/hand/discard are all empty, so detection returns
+False and **every specialist is bypassed for the one decision that sets the tempo of the whole
+game.** The generic `scorer._score_sub` then decides with a rule nobody ever measured — *"going
+second is often better for a setup deck"* — silently overriding `lucario_rules`' documented and
+opposite preference (*"aggro wants the Riolu→Mega clock a turn sooner"*), which has therefore been
+**dead code in every artifact we have ever shipped, including the 776.9 Crustle wall.** Note also
+`main.py`'s fallback says YES, so the repo held three conflicting opinions and the untested one won.
+
+**Fix (shipped):** we ship the decklist, so there is no need to infer our archetype from an empty
+board — `is_lucario_deck` falls back to the bundled `deck.csv` when nothing at all is visible. The
+guard requires active, bench, hand AND discard to be simultaneously empty, which only happens before
+the opening hand exists, so **no in-game decision changes**. Same pattern as slot 4's `LUCARIO_DECK`
+fix: bind the pilot to the list we actually pilot.
+
+**Evidence, two independent kinds — this is the part that makes it shippable.**
+1. **Real field:** 91/93 IS_FIRST answers by real ladder Lucario players in the 2026-08-08 dump are
+   YES.
+2. **Causal, in-engine:** `tools/first_turn_ab.py` plays mirror games — identical deck, identical
+   policy on both seats, *only* the turn-order answer forced — arm-swapped and seat-swapped. Two
+   independent runs:
+
+   | run | forced YES (asked player wins) | forced NO |
+   |---|---|---|
+   | n=1000 | 51.8% ± 4.4 | 47.0% ± 4.4 |
+   | n=1200 | 56.0% ± 4.0 | 45.5% ± 4.0 |
+
+   Pooled, **the player who went first won 1187/2200 = 54.0% ± 2.1 (z=3.7, p≈0.0002).** Verified the
+   forcing actually works: forced YES → asked player takes the first MAIN turn; forced NO → the
+   opponent does.
+
+**Paired agreement A/B** (`tools/prize_agreement.py`, same 4,074 elite decisions, both trees):
+all 52.90 → **53.73**, other 64.85 → **67.04**, main 45.49 → 45.53, attack-available 39.02 → 39.08,
+attack-choice 36.26 → 36.42, swing-or-end 88.00 → 88.00, setup 71.43 → 71.43. **No bucket
+regresses.** IS_FIRST itself 2.2% → **97.8%**. (One MAIN decision out of 2,530 also moved, toward
+elite play — consistent with the lethal verifier's determinization sampling, not with this change.)
+
+### The rest of the angle is a NEGATIVE, and that is the more useful half
+
+**In-turn energy/retreat/bench sequencing is not a leak. Do not spend another slot here.**
+
+- **The scary-looking number was a confound.** `tools/tempo_agreement.py` (new) reports
+  `main/attach-to-bench` agreement at **18.6%** vs 52.4% for attach-to-active, which looks like we
+  systematically refuse to pre-fuel the bench. It is the turn-ordering artifact: we play a card
+  first and attach later in the same turn. `tools/attach_probe.py` (new) removes it by keeping only
+  decisions where the elite **and** we both attached at that same point — so the only thing that can
+  differ is the target. Result: **89.8% (149/166)** area agreement, and we bench energy **37.3%** of
+  the time against their **40.4%**. Our attach targeting is right.
+- **We do not waste the attachment.** `tools/turn_audit.py` (new) plays full games and counts, per
+  turn, resources left unspent at the turn-ending decision: **wasted_attach 3.6%**, **wasted_bench
+  3.0%**, **retreat-then-no-attack 0.6%** of turns.
+- **And the ones it does flag are correct.** All **24** real positions where the elite attached and
+  we swung instead are **KO swings, 14 of them provably taking the opponent's last prizes**. Not
+  premature — game-closing.
+
+### New instruments (the durable output besides the fix)
+- `tools/tempo_agreement.py` — sibling of `prize_agreement.py`, bucketed for energy/retreat/bench,
+  with confusion tables ("elite attached, we played X instead").
+- `tools/attach_probe.py` — confound-free attach-target cross-tab, conditioned on board state.
+- `tools/turn_audit.py` — **the first instrument we have that scores whole TURNS instead of single
+  decisions**, so it can see resources left unspent. Both agreement harnesses are structurally blind
+  to this. Takes `--src`. NB: it now reads the *packed tree's* `agent/deck.csv`; my first run used
+  the repo's `agent/deck.csv`, which is a **different archetype**, and every number was garbage
+  (35.9% "wasted bench" that evaporated on the right list). **Always confirm the deck line it
+  prints.**
+- `tools/first_turn_ab.py` — forced mirror A/B of a single binary decision. The template for
+  causally testing any once-per-game choice.
+
+### Verification (all green)
+- `robust_probe` on the packed tree: 400 games / **47,972 agent decisions** — 0 exceptions, 0
+  illegal selections, 0 engine rejects, 0 hangs, 0 moves over 1s. Latency p50/p99/max
+  0.28 / 181 / 258 ms; worst cumulative game 3.8s of 600s. **CLEAN.**
+- Packed cabt mirror smoke on the EXTRACTED tarball: `steps=151 statuses=[DONE,DONE] rewards=[-1,1]`.
+- `pytest tests/` → **9 passed, 2 failed, down from 3.** `test_go_first_prefers_second` asserted the
+  belief this run refuted (and was failing anyway); it is now `test_go_first_is_accepted` and
+  asserts the measured behaviour. The remaining 2 are the pre-existing mock-fixture lethal ones.
+
+### On the eviction, and a live demonstration of why score readings are useless today
+Ship justification was deliberately **structural, not score-based**: v3 = v1 + both of this week's
+correctness fixes, so evicting v1 cannot cost an idea. That was the right basis — inside this single
+run the readings **crossed over**:
+
+| ref | earlier today | at submit time |
+|---|---|---|
+| 55390373 (v2) | 506.8 | **572.7** |
+| 55389997 (v1) | 596.5 | **505.7** |
+
+Anyone who had evicted on the 596.5/506.8 reading would have kept the wrong one. **Third day running
+that this file has had to say it: do not conclude from a same-day reading.**
+
+### What the next run should do FIRST
+1. **Read 55390639's converged score**, and re-read 55390373. Both are the same pilot on the same
+   list; v3 differs from v2 by exactly one binary decision per game measured at +4pp win rate, so
+   this pair is a genuinely clean live A/B of the turn-order fix. **It is the first clean live A/B
+   we have ever set up — do not evict either of them until both settle.** 1 submission remains today
+   at the time of writing; if you have slots and nothing better, leaving them alone is correct.
+2. **The IS_FIRST bug is only fixed for Lucario.** `crustle_rules`, `grimmsnarl_rules`,
+   `starmie_rules`, `tusk_rules`, `fezandipiti_rules`, `dunsparce_rules`, `iono_rules`,
+   `cinderace_rules`, `hops_snorlax_rules` all still get bypassed at IS_FIRST and inherit scorer's
+   refuted "go second". Each needs the same deck.csv fallback in its `is_*_deck`. Costs nothing
+   today (we ship Lucario) but it is a landmine the moment we swap archetypes — and it means every
+   historical score in this file, including the 776.9 wall, was set while conceding the first turn.
+3. **Look for more once-per-game decisions with the same shape.** The lesson generalises: the
+   dispatch is board-visibility-based, so *any* decision taken before the board reveals the
+   archetype is decided by untested generic defaults. `SelectContext.MULLIGAN` (42) is the obvious
+   next one — it does not appear in our corpus at all, so nobody has ever checked it.
+4. Do NOT spend a slot on in-turn energy/retreat/bench sequencing (closed above), on prize-trade
+   economics (closed slot 4), or on search (closed slot 3, four refutations).
+5. The unexploited lever is still **a specialist for a top archetype we cannot fly**
+   (Kangaskhan/Latias 63.2%, Dragapult/Meowth 58.0%, Thwackey/Dipplin 59.5%). Multi-run build.
+6. `STRATEGY.md` still does not exist ($30k × 8, due 2026-09-13). The material is now very strong:
+   four refutations of search, the anti-predictive-arena result with a number, the meta-collapse
+   story, the prize-trade double negative, and now a structural dispatch bug that silently handed
+   every specialist's opening-tempo decision to an untested default. **Highest-value unclaimed thing
+   in the workspace.**

@@ -105,3 +105,21 @@ The note above still stands and is reinforced: the top seven play seven differen
 the ~400pt gap to the prize cut is piloting quality, not a decklist secret. Confirmed from a second
 direction this run — Thwackey/Dipplin (59.5% real-field) goes 10.4% under our *generic* pilot,
 i.e. archetype strength does not transfer without a hand-written specialist.
+
+## 2026-08-09 end of day (slot 5)
+
+Active pair: **55390373 (v2)** + **55390639 (v3, PENDING)**. Evicted 55389997 (v1).
+Submissions used today: 4 of 5.
+
+Same-day readings crossed over inside a single run — recorded as evidence that these are not
+converged:
+
+| ref | ~21:40 UTC | ~22:05 | ~22:15 | ~22:21 |
+|---|---|---|---|---|
+| 55389997 (v1 Lucario/Majkel) | 775.6 | 559.1 | 596.5 | **505.7** |
+| 55390373 (v2, + verifier deck fix) | — | — | 506.8 | **572.7** |
+| 55389333 (Crustle wall, evicted) | 489.2 | 506.0 | 540.1 | 540.1 |
+
+v2 and v3 are the same pilot on the same list differing by exactly one binary decision per game
+(turn order, measured at +4pp win rate over 2,200 mirror games). **That makes this pair the first
+clean live A/B we have set up — let both settle before evicting either.**
