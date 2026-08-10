@@ -337,6 +337,63 @@ achieves what the search proves and the deviation is free downside. Earlier work
 to buy that protection with a tuned score margin. A proof buys it exactly, for the cost of one extra
 fork.
 
+### And it was blind below the top-level menu
+
+The verifier was asked its question only at the top-level action menu. That was an assumption, not a
+requirement — the engine's search API will start from any observation the agent is handed. So the
+moment the heuristic decided to *play a card*, the engine's follow-up question (**which** card,
+**which** target) was answered with nothing checking that the answer preserved a proven win.
+
+Over 3,607 real single-answer sub-selects: a win this turn is provable from **186** of them, the
+shipped answer keeps it in **174**, and throws it away in **12**. The 93.5% preservation rate
+replicates the top-level finding exactly — prior protection is load-bearing at every depth.
+
+The 12 come with corroboration from outside the proof. Our corpus is decisions from games the
+frontier player **won**, so we can ask what they did in those same positions: they played the
+verifier's answer **7 times**, and ours **once**.
+
+## 5c. The mirror image does not work, and the reason generalises
+
+The obvious next step is to flip the polarity. If proving "I win this turn" pays, prove "**they** win
+next turn" and avoid it. That is the entire defensive half of prize trading — knowing when a trade is
+correct is knowing what they get to do back. We built it, measured it, and did not ship it.
+
+The construction is sound and we would defend every piece. Fork at the decision, apply the move that
+ends our turn, then AND/OR search their turn — OR over their choices, AND over ours — with the leaf
+value again the engine's terminal result. Their hand is hidden, so inside the fork it is placeholder
+basics: they may attach, retreat, use the abilities of Pokémon already in play and attack, but they
+cannot play a trainer or gust something up. That is a strict **subset** of their real options, so the
+model can only *miss* threats, never invent one.
+
+It found real threats. Re-run with the opponent forbidden to attach energy inside the fork — leaving
+them only what is already on their board — the counts do not move at all. Nothing rested on a
+mis-modelled energy zone.
+
+And it is useless. Two measurements say so.
+
+**First, run the verifier on the frontier player's own move instead of ours.** It condemns their move
+at **17.5%** of the positions it looks at, against **17.6%** for ours — the same rate — in games
+those players went on to *win*. Sequence the corpus by turn and the reason is visible: the positives
+arrive in runs of consecutive decisions inside a single turn, and the run still proves losing after
+the elite's own development and their own attack. The verifier is describing the position. It is not
+describing the move.
+
+**Second, there is nothing to do about it.** A provably-safe alternative exists in **4 of 2,500**
+decisions, and in none of those 4 did the elite play the alternative.
+
+**The asymmetry is the transferable result.** An offensive proof is actionable because we are the one
+who acts: "a win exists, and your move throws it away" *names the move to play instead*. A defensive
+proof is a statement about what the opponent will do, and proving that they have a winning line does
+not produce a move that takes it away from them. Identical engine, identical leaf value, identical
+discipline — and one direction is worth shipping while the other is worth only the measurement.
+
+**A proof is worth searching for only when we are the one who gets to act on it.**
+
+We would also single out the cheap test that produced this, because it applies to any agent that
+flags its own decisions: **re-run the flag on strong players' decisions from games they won.** If it
+fires on theirs at the same rate it fires on yours, it is measuring the position rather than the
+policy, and no amount of soundness will turn it into a better move.
+
 ---
 
 ## 6. Verification: what we do before anything ships

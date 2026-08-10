@@ -953,3 +953,175 @@ Did not use the remaining 3 slots. Every further submission tonight would evict 
 control for the single-mechanism A/B this run set up, and there is no other verified candidate that
 beats it — v5 exists and is robustness-clean but the agreement harness says it is worse than both.
 An unused slot beats a wasted one.
+
+---
+
+## 2026-08-10 (UTC) — slot 4/5 — ANGLE: prize-trade economics
+
+**Submitted:** ref `55394411` `luc_majkel_v7.tar.gz` — "slot4 luc-majkel-v7". CLI: **2 submissions
+remaining today** (today's count v4 + v6 + v7 = 3). Evicted `55392668` (v4). Active pair is now
+**55393889 (v6) + 55394411 (v7)**, a clean single-mechanism A/B on a byte-identical decklist.
+
+Two mechanisms were built and measured this run. **One shipped, one was rejected — and the reason
+the rejected one fails is the more valuable result.**
+
+### Reading the A/B the last run set up, and a correction to how we read scores at all
+
+| ref | 01:57 | 02:17 | note |
+|---|---|---|---|
+| v6 `55393889` | 674.1 | **571.6** | live, unconverged (was 600.0 at 18 min, 451.7 at 02:05) |
+| v4 `55392668` | 545.5 | 493.5 | live until evicted this run |
+| v3 `55390639` | 648.4 | 648.4 | **frozen** — evicted 01:47 |
+| v2 `55390373` | 550.7 | 550.7 | **frozen** |
+
+**v6 has now been read at 600.0 / 674.1 / 451.7 / 571.6 inside two hours on an artifact nobody
+touched.** No v6/v4 conclusion is available and none should be drawn.
+
+**The correction worth carrying: eviction freezes a score, so an old "settled" number may be a
+stopped clock rather than a converged one.** v3's 648.4 and v2's 550.7 have not moved since they
+went inactive, while both live refs move by >100 points an hour. A new agent enters at 600 and its
+rating walks from there; if it is evicted mid-walk, whatever it happened to read is what stays in
+the table forever. Every historical score in RESEARCH.md that belongs to an evicted submission
+should be read as "where the walk was when it stopped", not as that agent's strength. Team standing
+at 02:10: **rank 4511 of 6689, score 535.0**, against a field median of 625.8.
+
+### Rejected: the defensive mirror of the win search (`agent/threat.py`, built, NOT wired in)
+
+The angle's honest opening. RESEARCH.md closes prize-trade economics, but it closes the *offensive*
+half — swing-or-end 88.0%, attack-choice deviation 6/133, the Mega-ex exposure guard measured
+harmful. The defensive half was never measured: after we swing, can they swing back and take their
+last prizes? That is what "when is trading a Pokémon correct" actually asks.
+
+`agent/threat.py` answers it the only way this workspace has ever got value out of search — with a
+proof at the leaf. Fork at the MAIN decision, apply the scorer's turn-ending move, then AND/OR
+search the opponent's turn: **OR over their selections, AND over ours** (promoting a new Active
+after a knockout), leaf value `state.result`. Their hand and deck are placeholder basics, so in the
+fork they may attach, retreat, use in-play abilities and attack, but cannot play a trainer or gust —
+a strict **subset** of their real options, so the model can only miss threats, never invent one.
+
+`tools/threat_probe.py` over 2,500 real ladder MAIN decisions:
+
+| | our move | **the elite's own move** |
+|---|---|---|
+| gate opened (they are within one KO of their last prize, or we have no bench) | 170 | 97 |
+| the move **provably loses** | 30 — **17.6% of gated** | 17 — **17.5% of gated** |
+| a provably-safe alternative turn-ender exists | 4 | 1 |
+
+**Three findings, and the third kills it.**
+
+1. **The threats are real.** Re-run with the opponent forbidden to ATTACH inside the fork
+   (`--no-opp-attach`, leaving them only energy already on their board): **identical counts, 30 and
+   17.** No proof depended on the energy zone derived from the placeholder deck. This was the
+   soundness worry going in, and it is dead.
+2. **It describes the position, not the move.** `--elite-move` judges the frontier player's own
+   decision instead of ours: it condemns theirs at **17.5%** against **17.6%** for ours — the same
+   rate — in games they went on to **win**. Sequencing the corpus by turn shows the mechanism: the
+   positives arrive in runs of consecutive decisions inside one turn, and the run still proves
+   losing after the elite's own development line *and* their own attack. The position is lost. The
+   move is not why.
+3. **There is nothing to do about it.** A provably-safe alternative exists in **4 of 2,500**, and
+   the elite played our alternative in **0** of them.
+
+**The durable asymmetry.** An offensive proof is actionable because we are the one who acts — "a win
+exists and your move throws it away" *names the move to play instead*. A defensive proof is a
+statement about what the **opponent** will do, and proving they have a winning line does not produce
+a move that takes it away from them. Identical engine, identical leaf value, identical discipline,
+opposite outcome. **Search for a proof only where we are the one who gets to act on it.**
+
+`--elite-move` is the reusable instrument here and it should be pointed at every future verifier: if
+a flag fires on frontier players' decisions at the same rate it fires on ours, in games they won, it
+is measuring the position rather than the policy.
+
+### Shipped: the win verifier was blind below the MAIN menu
+
+Last run's item 3, and it survives contact. `lethal_move` returned `None` on any context that was
+not `SelectContext.MAIN`. **Nothing about the search needs a MAIN menu** — `search_begin` works from
+any agent observation carrying a `search_begin_input`. It was an assumption, never a requirement.
+The cost: the moment the scorer decided to PLAY a card, the engine's follow-up question — *which*
+card, *which* target, *where* to attach — was answered with nothing checking the answer kept a
+proven win alive.
+
+`tools/lethal_sub_cost.py` (new) over **3,607 real single-answer sub-selects**:
+
+| | n |
+|---|---|
+| a win this turn is provable **from the sub-select itself** | 186 |
+| the shipped answer **keeps** it → the verifier must stay silent | 174 (93.5%) |
+| the shipped answer **throws it away** | **12** |
+
+The 93.5% preservation rate replicates the MAIN-level number almost exactly, which is the important
+part: **v6's prior protection is just as load-bearing here.** Without it this would be 186
+gratuitous deviations from a strong prior — the exact failure v6 was built to stop.
+
+**And the 12 are corroborated from outside the proof.** The corpus is decisions from games the
+frontier player *won*: in those 12 positions the elite played **the verifier's answer 7 times and
+our shipped answer once**. No change in this workspace has previously had external validation of
+this kind — v6's own 6 saves had none.
+
+Most fire in one shape: the opponent has **no benched Pokémon**, so a knockout of their Active ends
+the game outright, and the sub-select that picks the wrong card quietly gives that up. Several sit
+at turn 2 against a lone 60–70 HP basic — checked, and the opponent's Active is face-up in every one
+of them, so these are not the placeholder-Active artifact they superficially resemble.
+
+`lethal.ALLOW_SUB_SELECT = True`; `scorer.best_options` consults the verifier when
+`ctx == MAIN or (select.maxCount == 1 and n > 1)`. Forced and multi-answer selects are skipped —
+there is nothing to choose, and a padded multi-select answer is not something a proof can reason
+about.
+
+### The agreement harness is NOT deterministic — and finding that out is what made the read clean
+
+v7's first agreement run moved `main`, a bucket the change **cannot touch by construction** (on a
+MAIN record v6 and v7 execute identical code). So I re-ran **v6 against itself**:
+
+| bucket | v6 run 1 | v6 run 2 | **v7** |
+|---|---|---|---|
+| all | 2222 (54.52%) | 2216 (54.39%) | 2222 (54.54%) |
+| **main** | **1184 (46.80%)** | **1179 (46.60%)** | 1180 (46.64%) |
+| **other** (sub-selects) | **1007 (67.04%)** | **1007 (67.04%)** | **1012 (67.38%)** |
+| every other bucket | — | identical | identical |
+
+`lethal.py`'s fork draws from a determinized deck, so the engine's own randomisation makes a proof
+appear or vanish between runs. `main` is where the verifier ran in v6; `other` is where it did not —
+exactly the observed split. So:
+
+- **v7's `main` delta is inside v6's own run-to-run spread. Not attributable.**
+- **v7's `other` +5 decisions is real** — v6's `other` is reproducible to the decision across two
+  runs, and `other` is the only bucket this change can reach.
+
+Practical rule now in RESEARCH.md: **a MAIN-bucket delta under ±5 decisions (±0.2 pt) is not
+attributable**; re-run the baseline in the same session before believing a small one. Larger
+recorded deltas survive (v6−v4 was +32 decisions on main).
+
+### Verification (all green)
+- `robust_probe` vs all **153 real ladder decklists**: 920 games / **135,211 decisions** — 0
+  exceptions, 0 illegal, 0 engine rejects, 0 hangs, 0 moves over 1s. p50/p99/max
+  **0.58 / 260.3 / 585.8 ms** (v6: 0.27 / 247.8 / 466.7). Worst cumulative game **33.6s of 600s**
+  (5.6%, up from v6's 12.1s — the verifier now runs on far more decisions; still ~1/18th of clock).
+- Packed cabt mirror smoke on the EXTRACTED tarball: `steps=104 statuses=[DONE,DONE] rewards=[-1,1]`.
+- `pytest tests/` → **9 passed, 2 failed**, the same pre-existing mock-fixture failures, none new.
+- Artifact diff vs v6: **exactly `lethal.py` and `scorer.py`**; `deck.csv` byte-identical.
+  `agent/threat.py` is deliberately kept OUT of `build_submission.sh` so the A/B stays single-mechanism.
+
+### What the next run should do FIRST
+1. **Read `55394411` (v7) against `55393889` (v6)** — but only after both have been live for hours,
+   and read the *shape* of the walk, not one number. v6 alone produced 600.0 / 674.1 / 451.7 / 571.6
+   in two hours. If a single reading is all that is available, do not conclude.
+2. **Do not rebuild the defensive mirror.** It is measured, falsified three ways, and the code is
+   kept at `agent/threat.py` + `tools/threat_probe.py` so the next run can read it instead of
+   rebuilding it. Six angles are now closed by measurement: robustness, estimate-search (4
+   refutations), prize-trade economics (both halves), in-turn energy/tempo, deck construction, and
+   the defensive proof.
+3. **Point `--elite-move` at the existing verifiers.** It cost almost nothing and it is the only
+   instrument here that can tell "this flags bad play" from "this flags bad positions". Running it
+   against the MAIN-level `lethal` override is the obvious next application.
+4. **The verified-proof line still has room, and it is the only one that does.** The pattern that
+   works is: find a decision the proof can reach that nothing currently checks, then protect the
+   prior with a second proof. MAIN was v6, sub-selects are v7. What is left: multi-answer selects
+   (skipped here on purpose), and `_win_plausible`'s coverage of the no-bench clause.
+5. Still open and still the biggest structural lever: **a specialist for an archetype we cannot fly**
+   (Kangaskhan/Latias 61.2% deck-only, Dragapult/Meowth 57.4%), against a documented 0/32 piloting
+   failure. And watch Lucario vs Grimmsnarl (49.4% pooled, sliding).
+
+Did not use the remaining 2 slots. v6 and v7 are the two strongest artifacts and differ by one
+measured mechanism; a third submission tonight would evict v6 and destroy the A/B for no candidate
+that beats it. An unused slot beats a wasted one.

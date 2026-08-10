@@ -323,12 +323,90 @@ by construction the scorer's line provably wins the same turn. Robustness vs the
 proof, and it should speak only when it can prove the prior is wrong. Nothing here reopens search in
 general.
 
-### Verified-search instruments (2026-08-10, both take `--src`)
+### ...AND THE VERIFIER WAS BLIND BELOW THE MAIN MENU (fixed 2026-08-10, shipped v7)
+
+`lethal_move` returned `None` on any context that was not `SelectContext.MAIN`. **Nothing about the
+search requires a MAIN menu** — `search_begin` works from any agent observation with a
+`search_begin_input` — so that was an assumption, never a requirement. The consequence: the moment
+the scorer decided to PLAY a card, the engine's follow-up question (*which* card, *which* target,
+*where* to attach) was answered with no check that the answer kept a proven win alive.
+
+`tools/lethal_sub_cost.py` (new) over **3,607 real single-answer sub-selects**:
+
+| | n |
+|---|---|
+| a win this turn is provable **from the sub-select itself** | 186 |
+| the shipped answer **keeps** it (verifier must stay silent) | 174 |
+| the shipped answer **throws it away** | **12** |
+
+The 93.5% preservation rate replicates the MAIN-level finding exactly and is the reason the v6 prior
+protection is load-bearing here too — without it this would be 186 gratuitous deviations.
+
+**The 12 are corroborated from outside the proof.** The corpus is decisions from games the frontier
+player *won*, and in those 12 positions the elite played **the verifier's answer 7 times and our
+shipped answer once**. That is external validation the MAIN-level change never had.
+
+Most fire in a specific, high-value shape: the opponent has **no benched Pokémon**, so a knockout of
+their Active ends the game outright (`_win_plausible`'s second clause), and the sub-select that
+picks the wrong card quietly gives that up. Latency p50 0.13 ms, p99 138 ms.
+
+`lethal.ALLOW_SUB_SELECT = True`; `scorer.best_options` now calls the verifier when
+`ctx == MAIN or (maxCount == 1 and n > 1)` — forced and multi-answer selects are skipped because
+there is nothing to choose and a padded multi-select is not something a proof can reason about.
+
+## THE DEFENSIVE MIRROR OF THE WIN SEARCH DOES NOT WORK — measured and rejected (2026-08-10)
+
+The obvious next move after v6 is to flip the polarity: instead of proving *we* win this turn, prove
+*they* win next turn, and pick a turn-ender that avoids it. That is the whole defensive half of prize
+trading, and it is the one thing the "prize-trade is settled" section below never measured.
+**It was built (`agent/threat.py`), measured (`tools/threat_probe.py`) and NOT wired in.** Both files
+are kept so no future run pays to rediscover this.
+
+Design, for the record: fork at the MAIN decision, apply the scorer's turn-ender, then AND/OR search
+the opponent's turn — OR over their selections, AND over ours (promoting after a knockout), leaf
+value `state.result`. Their hand and deck are placeholder basics, so inside the fork they can attach,
+retreat, use in-play abilities and attack but cannot play a trainer or a gust: a strict *subset* of
+their real options, so the model under-approximates and cannot invent a threat.
+
+Over 2,500 real ladder MAIN decisions:
+
+| | our move | **the elite's own move** |
+|---|---|---|
+| gate opened (they are within one KO of their last prize, or we have no bench) | 170 | 97 |
+| the move **provably loses** | 30 (17.6% of gated) | **17 (17.5% of gated)** |
+| a provably-safe alternative turn-ender exists | 4 | 1 |
+
+**Three findings, and the third kills it.**
+
+1. **The threats are real, not artifacts.** Re-run with the opponent forbidden to ATTACH inside the
+   fork (`--no-opp-attach`, so they may use only energy already on their board): **identical numbers,
+   30 and 17.** So no proof depends on the energy zone derived from the placeholder deck.
+2. **It describes the position, not the move.** Judged on the *elite's own* move it fires at
+   **17.5%** of gated decisions against **17.6%** for ours — statistically the same rate — in games
+   the elite went on to **win**. Sequencing the corpus by turn shows why: the positives come in runs
+   of consecutive decisions within one turn, and the run still proves losing after the elite's own
+   development line and their own attack. The position is lost; the move is not the reason.
+3. **There is nothing to do about it.** A provably-safe alternative exists in **4 of 2,500**
+   decisions, and the elite played our alternative in **0** of them.
+
+**The durable asymmetry — write this on the wall.** An *offensive* proof is actionable because we
+execute it ourselves: "a win exists and your move loses it" names the move to play instead. A
+*defensive* proof is about what the **opponent** will do, and proving they have a win does not
+produce a move that stops them. Same engine, same leaf value, same discipline, opposite outcome.
+**A proof is only worth searching for when we are the one who gets to act on it.**
+
+### Verified-search instruments (2026-08-10, all take `--src`)
 
 | tool | what it answers |
 |---|---|
 | `tools/lethal_probe.py` | how many game-winning lines each throttle on `lethal.py` hides, attributed per axis, + the falsification check that a claimed win coincides with the game ending |
 | `tools/lethal_cost.py` | does the heuristic *keep* the win the search found? forks the game, plays the shipped agent's own move, re-searches |
+| `tools/lethal_sub_cost.py` | the same question **below** the MAIN menu: is a win provable from a sub-select, and does the shipped sub-selection preserve it? |
+| `tools/threat_probe.py` | the defensive mirror, with two falsifications built in: `--elite-move` judges the frontier player's own move instead of ours, `--no-opp-attach` strips the opponent's energy attachment |
+
+**`--elite-move` is the reusable idea.** Any verifier that flags our decisions should be re-run on the
+*elite's* decisions from games they won. If it flags theirs at the same rate, it is measuring the
+position and not the policy, and it will not improve play no matter how sound the proof is.
 
 ## Our pilots are deck-SPECIFIC and cannot fly an unfamiliar list (2026-08-09)
 
@@ -383,6 +461,26 @@ archetype needs its own corpus.
 
 Shipped-agent baseline: all **52.9%** (n=4074), main 45.5%, attack-available 39.1%,
 **swing-or-end 88.0%**, attack-choice 36.4%, sub-selects 64.9%.
+
+### ⚠ THE HARNESS IS NOT DETERMINISTIC WHERE THE VERIFIER RUNS (measured 2026-08-10)
+
+`prize_agreement` was assumed reproducible. It is not, and the error bar is bucket-specific. The
+**same tree** (`luc_majkel_v6_src`) on the **same 4,074 records**, run twice:
+
+| bucket | run 1 | run 2 | delta |
+|---|---|---|---|
+| all | 2222 (54.52%) | 2216 (54.39%) | −6 |
+| **main** | **1184 (46.80%)** | **1179 (46.60%)** | **−5** |
+| other | 1007 (67.04%) | 1007 (67.04%) | **0** |
+| every other bucket | — | — | 0 |
+
+The source is `lethal.py`: the verifier's fork draws from a determinized deck, so the engine's own
+randomisation makes a proof appear or vanish across runs. `main` is where it ran in v6, and `other`
+is where it did not — which is exactly the split observed.
+
+**Practical rule: a MAIN-bucket delta under ±5 decisions (±0.2 points) is not attributable.** Larger
+recorded deltas survive comfortably (v6−v4 was +32 decisions on main), but re-run the baseline in
+the same session before believing a small one. Buckets the verifier does not touch are exact.
 
 Caveat that matters: single-decision agreement **over-penalises benign turn ordering** (playing a
 card then attacking scores as a disagreement with an elite who attacked immediately). Judge policy

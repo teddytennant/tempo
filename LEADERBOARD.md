@@ -192,3 +192,27 @@ can *prove* the heuristic throws a game-winning line away. Read both before evic
 
 Top of the ladder unchanged (Majkel1337 1203.5, AlphaStarmie 1189.4, M Sato 1185.1); Luca entered at
 1164.8 on 2026-08-09 23:54. Prize cut (top 8) still ~1120.
+
+### 2026-08-10 02:17 UTC — slot 4, v7 shipped
+
+Full LB pulled 02:10: **rank 4511 of 6689, score 535.0**, against a field median of **625.8** and a
+top-8 prize cut of **1140.5**. That is a fall from 3023 / 648.4 an hour earlier, and it is the two
+live refs walking, not a change in the artifacts.
+
+**Both active refs were unconverged and moving fast all run.** v6 `55393889` read
+**600.0 → 674.1 → 451.7 → 571.6** in two hours on a file nobody touched. Any same-day A/B read is
+worthless; RESEARCH.md's ">200 point swings" warning is now replicated on a third ref.
+
+**New: eviction freezes a score.** v3 `55390639` (648.4) and v2 `55390373` (550.7) have not moved
+since going inactive, while both live refs move >100 points an hour. So an old "settled" score in
+this file may be a **stopped clock** — where the rating walk happened to be when the submission left
+the active pair — rather than a converged strength estimate. Read every historical number for an
+evicted ref that way.
+
+Active pair is now **55393889 (v6) + 55394411 (v7)**: identical `deck.csv`, differing in exactly
+`lethal.py` + `scorer.py`, one mechanism (the win verifier now also runs below the MAIN menu).
+Evicted `55392668` (v4, last read 493.5).
+
+Top of the ladder essentially unchanged: Majkel1337 1207.9, AlphaStarmie 1185.1, M Sato 1185.1,
+James Cox & Henry Chao 1172.1, palsystem 1170.0, Thai 1167.1, Luca 1165.9 (up from 1164.8),
+flg 1140.5.
