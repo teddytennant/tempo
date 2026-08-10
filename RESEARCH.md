@@ -260,6 +260,76 @@ lethals from determinized draws, plus a leaf evaluation weaker than the scorer's
 knowledge. **Do not spend another slot on search depth without a fundamentally different value
 function.**
 
+### ...BUT THE *VERIFIED* IN-TURN SEARCH IS DIFFERENT, AND IT WAS THROTTLED (2026-08-10)
+
+The four refutations above all refute the same thing: a **heuristic-eval** search *replacing* the
+scorer's ranking. `agent/lethal.py` is not that. It searches the engine's native forward model for a
+sequence that wins the game **this turn**, and its leaf value is `state.result` — a proof, not an
+estimate. So the "value function is weaker than the scorer's tempo knowledge" mechanism cannot apply
+to it. It had never been measured, and two of its four throttles were wrong.
+
+`tools/lethal_probe.py` (new) replays real ladder MAIN decisions under one-axis-at-a-time widenings.
+Over 2,500 decisions:
+
+| axis widened | proven wins / 2500 | vs shipped | p99 |
+|---|---|---|---|
+| shipped (prizes<=2, attack on menu, 600 nodes/0.25s, depth 10) | 86 | — | 140.6 ms |
+| `PRIZE_GATE` 2 -> 3 | 108 | +23 | 140.7 ms |
+| drop the attack-on-menu requirement | 113 | +28 | 139.5 ms |
+| budget -> 4000 nodes / 1.0 s | 95 | +10 | 899.1 ms |
+| depth 10 -> 18 | **84** | **-1** | 159.0 ms |
+| all four | 148 | +63 | 1000.8 ms |
+
+- **`PRIZE_GATE = 2` was arithmetically wrong.** One knockout is worth up to **3** prizes (a Mega
+  ex), so 3 is the largest prize count from which a single KO ends the game. Now `3`.
+- **Requiring an ATTACK already on the root menu defeated the point of searching** — the lines worth
+  finding are the ones that attach/evolve/use an ability *first*. Now off
+  (`lethal.REQUIRE_ATTACK_OPTION = False`, kept as a flag so the probe can A/B the axis).
+- Neither is a soundness condition: a positive is an engine-declared terminal win either way, so
+  both were only ever cost filters.
+- **`_MAX_DEPTH` and the node/time budget are measured NON-binding. Do not tune them.**
+
+**Falsification of the proofs** (they are taken under a determinized deck, so a lucky-draw line could
+be a phantom): segmenting the corpus into real games by the turn counter, claims sit at a **median of
+0 turns from the end of the game**; 87.1% within one turn for the widened gate vs 90.7% for the
+shipped one. The widened claims land where games actually end.
+
+### THE REAL LESSON: A PROOF IS NOT BY ITSELF A REASON TO OVERRIDE THE PRIOR (2026-08-10)
+
+Widening the gates **alone** made the agent worse — `prize_agreement` on the 4,074 elite decisions
+went all 53.73 -> 52.95, main 45.53 -> 44.27, attack-choice 36.42 -> 34.77, with robustness clean.
+`tools/lethal_cost.py` (new) says why. For every newly-proved position it forks the game, plays **the
+shipped agent's own move**, and re-runs the search:
+
+- **63 of 69**: the scorer's move keeps the win provable — the verifier was overriding a strong prior
+  on a turn that was **already won**. Pure churn.
+- **6 of 69**: the scorer plays a card (`PLAY` x4, `ATTACH` x2) that makes the win **unprovable** —
+  it develops the board on the turn it could have won. These are the only real saves.
+
+So `scorer.best_options` now calls the verifier **after** it has produced its own answer and hands
+that answer over; `lethal._keeps_the_win()` applies it in the fork and the verifier **stays silent if
+a win is still provable**. Prior protection decided by a proof instead of `lookahead.py`'s arbitrary
+`SWITCH_MARGIN = 900.0`. Ambiguity (no answer, illegal selection, engine error) counts as
+do-not-defer, so the proof wins ties.
+
+Shipped as v6 (`55393889`). Agreement v6 vs v4 on the same 4,074 decisions: **all 53.73 -> 54.52,
+main 45.53 -> 46.80, attack-available 39.08 -> 40.83, attack-choice 36.42 -> 37.58**, swing-or-end
+88.00 / setup / other unchanged; **elite-attacked 52.13 -> 49.18 and attack-choice+attacked
+48.87 -> 45.11 fall** — the elite-attacked slices, where the turn-ordering confound bites, and where
+by construction the scorer's line provably wins the same turn. Robustness vs the 153 field decks:
+920 games / 140,106 decisions, CLEAN, worst cumulative game 12.1s of 600s.
+
+**The narrow claim to carry forward:** the only search allowed to speak is one whose leaf value is a
+proof, and it should speak only when it can prove the prior is wrong. Nothing here reopens search in
+general.
+
+### Verified-search instruments (2026-08-10, both take `--src`)
+
+| tool | what it answers |
+|---|---|
+| `tools/lethal_probe.py` | how many game-winning lines each throttle on `lethal.py` hides, attributed per axis, + the falsification check that a claimed win coincides with the game ending |
+| `tools/lethal_cost.py` | does the heuristic *keep* the win the search found? forks the game, plays the shipped agent's own move, re-searches |
+
 ## Our pilots are deck-SPECIFIC and cannot fly an unfamiliar list (2026-08-09)
 
 Piloting Dipam Chakraborty's real Dragapult/Meowth list (the 58.0% best deck in the field):

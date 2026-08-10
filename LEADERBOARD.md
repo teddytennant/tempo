@@ -174,3 +174,21 @@ Top of the ladder: Majkel1337 1203.5, AlphaStarmie 1189.4, M Sato 1185.1, James 
 **And Majkel1337 plays our exact 60 cards** — 23 of 26 games in the 2026-08-09 dump. The ~550-point
 gap between us and rank 1 is entirely policy, not deck. Three other teams ship the identical list at
 892.4, 879.9 and unrated: **a 320-point spread on the same 60 cards.**
+
+### 2026-08-10 01:47 UTC — slot 3, v6 shipped
+
+Full LB pulled 01:00 UTC: **rank 3023 of 6683, score 648.4**. v4 (`55392668`) read **685.6** ten
+minutes after submission and the team score had already settled back to 648.4 — another instance of
+the "never conclude from a fresh reading" rule, this time within one hour.
+
+Active pair is now **55392668 (v4) + 55393889 (v6)**. Evicted `55390639` (v3, last read 654.7),
+which was policy-identical to v4 on the shipped path and so contributed nothing the pair did not
+already have.
+
+**The v4/v6 pair is the cleanest live A/B this workspace has ever set up.** Identical `deck.csv`,
+identical everything except `lethal.py` + `scorer.py`, one mechanism: the verified in-turn win search
+now covers the positions its two cost filters were hiding, and overrides the heuristic only where it
+can *prove* the heuristic throws a game-winning line away. Read both before evicting either.
+
+Top of the ladder unchanged (Majkel1337 1203.5, AlphaStarmie 1189.4, M Sato 1185.1); Luca entered at
+1164.8 on 2026-08-09 23:54. Prize cut (top 8) still ~1120.

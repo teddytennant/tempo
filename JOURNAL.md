@@ -788,3 +788,156 @@ end the day with the two strongest agents active, and v3 + v4 beats v3 + v2.
    player is testing. If it grows past ~5% of the field the list stops being fine.
 5. `STRATEGY.md` exists and is strong. This run adds three sections worth having: the identical-list
    / 320-point-spread result, the rating-controlled de-confounding method, and the prefix-scan trick.
+
+---
+
+## 2026-08-10 (UTC) — slot 3/5 — ANGLE: search depth (lookahead, better leaf evaluation)
+
+**Submitted:** ref `55393889` `luc_majkel_v6.tar.gz` — "slot3 luc-majkel-v6". CLI: **3 submissions
+remaining today** (so today's count is v4 + v6 = 2). Evicted `55390639` (v3), which was
+policy-identical to v4 on the shipped Lucario path, so the eviction cost nothing. Active pair is now
+**55392668 (v4) + 55393889 (v6)**. Team standing at the start of the run: **rank 3023 / 6683,
+LB 648.4** (v4 read 685.6 ten minutes after submission and has since drifted — do not conclude).
+
+### Why I opened an angle RESEARCH.md calls settled
+
+Four refutations of search are on file, but the note that closes them ends with a precondition:
+*"do not spend another slot on search depth **without a fundamentally different value function**."*
+All four refuted the same thing — a heuristic-eval search **replacing** the scorer's ranking
+(determinized UCT 560.1 live, Rust MCTS 528.8 live, the `lookahead.py` sweep ~38–42%, the `hybrid`
+A/B 23.3%/50.0%). The `lookahead.py` post-mortem names the mechanism: *"the static board value is a
+far weaker signal than the scorer's own implicit tempo knowledge."*
+
+There is exactly one search in the shipped artifact that does **not** have that problem, and it had
+never been examined: `agent/lethal.py`, which searches the engine's native forward model for a
+sequence that wins the game **this turn**. Its leaf value is not an estimate — it is
+`state.result`. It cannot be wrong about the value of a leaf. And it was throttled on four axes,
+none of them ever measured.
+
+### What the throttles were costing (`tools/lethal_probe.py`, new)
+
+Replays real ladder MAIN decisions under one-axis-at-a-time widenings, so a "wide proves a win,
+shipped does not" event is attributable. 2,500 decisions from `records_11447.jsonl`:
+
+| axis widened | proven wins / 2500 | vs shipped | p99 latency |
+|---|---|---|---|
+| **shipped** (prizes≤2, attack on menu, 600 nodes/0.25s, depth 10) | **86** | — | 140.6 ms |
+| PRIZE_GATE 2 → 3 | 108 | +23 | 140.7 ms |
+| drop the attack-on-menu requirement | 113 | +28 | 139.5 ms |
+| budget 600/0.25s → 4000/1.0s | 95 | +10 | 899.1 ms |
+| depth 10 → 18 | **84** | **−1** | 159.0 ms |
+| all four | 148 | +63 | 1000.8 ms |
+
+Two of the four throttles were badly wrong and two were fine:
+
+- **PRIZE_GATE = 2 is arithmetically wrong.** A single knockout is worth up to **three** prizes (a
+  Mega ex), so 3 is the largest prize count from which one KO ends the game. The field is full of
+  Mega ex. This gate hid 23 game-winning lines.
+- **Requiring an ATTACK already on the root menu defeats the purpose of searching.** The lines worth
+  finding are precisely the ones that must attach/evolve/use an ability *before* an attack becomes
+  available; those start from a menu with no attack on it. 28 lines hidden — the largest single hole.
+- **Depth 10 is not binding.** Raising it to 18 found *nothing* and lost one to the time cap.
+  Left alone.
+- **Budget is barely binding** (+10 for 6× the wall clock). Left alone.
+
+Neither of the two bad gates is a soundness condition. A positive is an **engine-declared terminal
+win** either way, so they were only ever deciding what to *look at*. Opening both together
+(`cand1`: prizes≤3, no attack requirement, budget and depth untouched) takes proven wins
+**86 → 140** at **p99 140.6 → 144.1 ms** — 54 of the 63 available, for free.
+
+### Falsification, because a determinized proof can be a phantom
+
+The proof is taken under a belief-corrected determinization of our own deck, so a line that needs a
+lucky draw could be fake. `lethal_probe` segments the corpus into real games by the turn counter and
+asks how far each claim sits from the end of that game. A genuine "a win exists this turn" should
+coincide with the game ending.
+
+| config | claims | median turns left | ended ≤1 turn | ≥4 turns left |
+|---|---|---|---|---|
+| shipped | 86 | 0 | 90.7% | 9.3% |
+| cand1 (both gates open) | 140 | 0 | 87.1% | 12.9% |
+
+The widened claims land where games actually end, on essentially the shipped verifier's own profile.
+The ~9–13% tail is a property of the *existing* artifact, not something this change introduces.
+
+### The widening ALONE made the agent worse — and the agreement harness caught it
+
+`prize_agreement` on the 4,074 elite decisions, v5 = v4 + both gates open:
+**all 53.73 → 52.95, main 45.53 → 44.27, attack-choice 36.42 → 34.77.** Four buckets down, none up.
+Robustness was clean (920 games / 134,567 decisions, worst cumulative game 19.8s of 600s) — this was
+a *play-quality* loss, exactly the shape RESEARCH.md's v8/v9 post-mortem describes.
+
+**`tools/lethal_cost.py` (new) explains it, and the explanation is the actual find of this run.**
+For every position the widening newly proves, it forks the game, plays **the shipped agent's own
+move**, and re-runs the search:
+
+- **63 of 69** — the scorer's move keeps the win provable. The verifier was overriding a strong
+  prior on a turn that was **already won**. Pure churn.
+- **6 of 69** — the scorer plays a card (`PLAY` ×4, `ATTACH` ×2) that makes the win **unprovable**.
+  It develops the board on the turn it could have won.
+- 0 undecidable.
+
+So widening buys 6 real saves per 2,500 decisions and pays for them with 63 gratuitous deviations.
+That is a textbook instance of this workspace's standing lesson, caught **before** it shipped.
+
+### The fix: prior protection decided by a proof, not a score margin
+
+`lookahead.py` protected the prior with `SWITCH_MARGIN = 900.0` — an arbitrary constant on a
+heuristic value. Here the same job can be done exactly. The verifier now runs **after** the scorer,
+is handed the scorer's answer, applies it in the fork, and **stays silent if a win is still
+provable**. It speaks only where it can *prove* the scorer throws the game away. Anything unclear —
+no scorer answer, a selection illegal for the fork, an engine error — counts as do-not-defer, so the
+proof wins ties.
+
+This required moving the `_lethal_move` call in `scorer.best_options` from before the scoring loop to
+after it, so it also withdraws the verifier's authority in the **86 positions the old gate already
+covered** where the scorer preserves the win. That is a larger behavioural change than the gate
+widening itself, and it is the one the agreement harness likes:
+
+| bucket | n | v4 | v5 (gates only) | **v6 (shipped)** | v6 − v4 |
+|---|---|---|---|---|---|
+| all | 4074 | 53.73 | 52.95 | **54.52** | **+0.79** |
+| main | 2530 | 45.53 | 44.27 | **46.80** | **+1.27** |
+| main/attack-available | 1712 | 39.08 | 38.14 | **40.83** | **+1.75** |
+| main/attack-choice | 604 | 36.42 | 34.77 | **37.58** | **+1.16** |
+| main/elite-declined-attack | 1407 | 36.25 | 35.04 | **39.02** | **+2.77** |
+| main/swing-or-end | 75 | 88.00 | 88.00 | 88.00 | 0 |
+| setup / other | 42 / 1502 | 71.43 / 67.04 | = | = | 0 |
+| main/elite-attacked | 305 | 52.13 | 52.46 | 49.18 | **−2.95** |
+| main/attack-choice+attacked | 133 | 48.87 | 48.87 | 45.11 | **−3.76** |
+
+**Read the two negatives honestly.** They are the elite-attacked slices, i.e. exactly where the
+documented turn-ordering confound bites: the old verifier said "attack now", the elite also attacked,
+so it scored as agreement. v6 defers to the scorer, which develops first and attacks later in the
+same turn. By construction every position involved is a turn where the scorer's line **provably
+wins**, so both lines take the game — but I cannot prove that from agreement alone, and the live
+score is the only arbiter. `main/attack-choice`, one of the two confound-free buckets, is **up**;
+`main/swing-or-end`, the other, is **unchanged**.
+
+### Verification (all green)
+- `robust_probe` vs all **153 real ladder decklists**: 920 games / **140,106 decisions** — 0
+  exceptions, 0 illegal, 0 engine rejects, 0 hangs, 0 moves over 1s. p50/p99/max
+  **0.27 / 247.8 / 466.7 ms**; worst cumulative game **12.1s of 600s** (2%). CLEAN.
+- Packed cabt mirror smoke on the EXTRACTED tarball: `steps=113 statuses=[DONE,DONE] rewards=[-1,1]`.
+- `pytest tests/` → 9 passed, the same 2 pre-existing mock-fixture failures, none new.
+- Artifact diff vs v4: **exactly `lethal.py` and `scorer.py`**; `deck.csv` byte-identical. Clean
+  single-mechanism live A/B against `55392668`.
+
+### What the next run should do FIRST
+1. **Read 55393889 against 55392668.** They differ in one mechanism on an identical decklist. If v6
+   > v4, the verified-search widening is real and the two elite-attacked bucket regressions were the
+   turn-ordering confound. If v6 < v4, then **deferring to the scorer on already-won turns is
+   wrong**, and the right follow-up is v5's unconditional widening (built, verified, robustness
+   clean, `experiments/luc_majkel_v5.tar.gz`) rather than reverting to v4. Either outcome is
+   informative — that is why this was worth a slot.
+2. **Do not re-open search generally.** The four refutations still stand and this run does not touch
+   them: nothing here replaces the scorer's ranking with a heuristic-eval search. What it shows is
+   narrower and should be stated narrowly — *the search that is allowed to speak is the one whose
+   leaf value is a proof, and it should speak only when it can prove the prior is wrong.*
+3. **The obvious next target on the same principle:** the verifier is only consulted at `MAIN`. The
+   scorer can still break a proven win inside a **sub-select** (which card to play, where to attach),
+   and nothing checks that. `lethal_cost.py` extends to it directly.
+4. `_MAX_DEPTH` and the node/time budget are measured non-binding — **do not tune them.** That is two
+   more dead ends closed cheaply.
+5. Still open and still the biggest lever: **a specialist for an archetype we cannot fly**
+   (Kangaskhan/Latias 61.2% deck-only, Dragapult/Meowth 57.4%), and watching Lucario vs Grimmsnarl.
