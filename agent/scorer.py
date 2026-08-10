@@ -309,11 +309,26 @@ def _score_sub(obs, o, ctx, me, opp, me_i, opp_i):
         return score + (o.number or 0)  # take the bigger number
     if t == OptionType.YES:
         if ctx == SelectContext.IS_FIRST:
-            return score  # decline going first (prefer going second) — see _score_sub NO
+            return score + 150.0  # TAKE the first turn — see the NO branch for the evidence
         return score + 100.0
     if t == OptionType.NO:
         if ctx == SelectContext.IS_FIRST:
-            return score + 100.0  # for a setup/reactive deck, going second is often better
+            # This branch used to add +100 ("for a setup/reactive deck, going second is often
+            # better"). That rule was never measured and it is wrong for the entire field, not
+            # just for one archetype:
+            #   * 2026-08-08 ladder dump, 1,400 episodes, 305 IS_FIRST answers across 25
+            #     archetypes: YES 99.0% overall and 100% in every one of the 9 archetypes with
+            #     >=8 samples (tools/first_turn_field.py).
+            #   * Of those same 305 asked seats, the seat that ended up going first won 54.4%.
+            #   * Causal, in-engine: tools/first_turn_ab.py, 2,200 mirror games with identical
+            #     decks and identical policy on both seats and ONLY the turn-order answer forced,
+            #     arm- and seat-swapped — the player who went first won 54.0% +/- 2.1 (p~0.0002).
+            # It mattered because specialist dispatch is keyed on cards VISIBLE on our side, and
+            # IS_FIRST is asked before the opening hand exists, so this generic default decided
+            # the opening tempo of every game we ever played. The archetype specialists now carry
+            # a deck.csv fallback for that frame; fixing the default too means a specialist that
+            # fails to load, or a list we have not written one for, no longer concedes the turn.
+            return score
         return score
     if t == OptionType.SPECIAL_CONDITION:
         return score
