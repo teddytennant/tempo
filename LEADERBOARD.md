@@ -123,3 +123,21 @@ converged:
 v2 and v3 are the same pilot on the same list differing by exactly one binary decision per game
 (turn order, measured at +4pp win rate over 2,200 mirror games). **That makes this pair the first
 clean live A/B we have set up — let both settle before evicting either.**
+
+## 2026-08-10 ~00:20 UTC — settled-ish readings of the v2/v3 A/B
+
+| ref | build | reading |
+|---|---|---|
+| 55390639 (v3) | Lucario/Majkel + turn-order fix | **621.5** |
+| 55390373 (v2) | Lucario/Majkel + verifier-deck fix | **550.7** |
+| 55389997 (v1, evicted) | Lucario/Majkel baseline | 505.7 |
+| 55389333 (Crustle wall, evicted) | June wall re-ship | 540.1 |
+
+v3 − v2 = **+70.8** at ~2h age, in the direction the turn-order fix predicts (+4pp win rate). It is
+the right sign but these refs are still young and this file has recorded a >200pt swing and a
+crossover on same-day readings twice. **Treat +70.8 as encouraging, not established** — re-read
+both before building on it. Active pair unchanged: 55390639 + 55390373 (no submission this run).
+
+Top of the ladder for scale: Majkel1337 1203.5, M Sato 1190.8, AlphaStarmie 1189.4; the top-8 /
+prize cut sits around **1128**. We are ~500 short, and §2 of STRATEGY.md is the reason: our pilot is
+strong on one archetype and unusable on the 58–63% archetypes the leaders fly.

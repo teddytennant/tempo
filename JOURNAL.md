@@ -531,3 +531,124 @@ that this file has had to say it: do not conclude from a same-day reading.**
    story, the prize-trade double negative, and now a structural dispatch bug that silently handed
    every specialist's opening-tempo decision to an untested default. **Highest-value unclaimed thing
    in the workspace.**
+
+---
+
+## 2026-08-10 (UTC) — slot labelled 1/5, prompt reported 4 used — ANGLE: robustness
+
+**NO SUBMISSION. Deliberate.** Justification below; this is not a blocked run.
+
+### Slot arithmetic first, because it decided the run
+
+The prompt said "SLOT 1 of 5" and "4 submissions already today". At the moment this run started the
+clock had just rolled over (`date -u` = 2026-08-10 00:00), so the cap had almost certainly reset —
+the 4 entries were all stamped 2026-08-09 20:40–22:21 UTC. **The cap was not the binding
+constraint. The active pair was.**
+
+Active: `55390639` (v3) **621.5** + `55390373` (v2) **550.7**. Any submission evicts v2 and destroys
+the clean live A/B the previous run set up — v2 and v3 are the same pilot on the same list differing
+by exactly one binary decision per game. This run produced no play-quality change (see below), so a
+submission would have paid for the loss of the A/B with nothing. Unused slot > wasted slot.
+
+For the record, the A/B currently reads **v3 − v2 = +70.8**, the sign the turn-order fix predicts.
+Still young; this file has twice recorded same-day crossovers. Do not build on it yet.
+
+### The angle is CLOSED, and closed properly rather than by assertion
+
+RESEARCH.md already said robustness was not the bottleneck, on the strength of 1500 games against
+11 curated decks. That is a sampling argument with an obvious hole, so I attacked the hole rather
+than repeating the measurement.
+
+**Layer 1 — the real field, not our curated decks.** `robust_probe` against **all 153 real ladder
+decklists** mined from the 2026-08-08 dump. Shipped v3: 920 games / **134,454 decisions** — 0
+exceptions, 0 illegal, 0 engine rejects, 0 hangs, 0 moves over 1s; p50/p99/max **0.33/232/268 ms**;
+worst cumulative game **6.1s of 600s**.
+
+**Layer 2 — coverage, the actual hole.** The engine defines **49 `SelectContext` values** and a
+normal game asks only some of them; an unreached context is code we ship unexecuted. New
+`tools/ctx_fuzz.py` measures it. A 1,224-game field sweep reaches **31/49** over 188,103 live
+decisions. I then measured what the *real ladder* asks by scanning **400 random episodes** out of
+the dump: **31** distinct contexts over 130,603 decisions. The only real-field context our probe
+never reaches is `32 TO_DECK_ENERGY` — **3 occurrences in 130,603 (0.002%)** — and we additionally
+reach `36 DISABLE_ATTACK`, which the real sample lacks. **Self-play against the field's own
+decklists reproduces the field's state distribution.** That is the sentence that makes layer 1 mean
+something.
+
+**Layer 3 — manufacture the states real play won't produce.** `ctx_fuzz` phase 2 rewrites every
+captured observation: the same board asked under **each of the 49 contexts**; degenerate bounds
+including `(0,0)`, `(n,n)`, `(n+1,n+1)` and the contradictory `(2,1)`; empty and truncated option
+lists; optional keys nulled *and* dropped; bench/hand/discard/active/prize/energyZone/stadium
+stripped to empty; turn 0, turn 9999, and a **decided** game still asking for a move; blanked
+option-record fields. **325,070 mutants: 0 exceptions, 0 illegal selections, max latency 20 ms.**
+Only no-raise and usable-selection are asserted — a mutated board is not necessarily reachable, so a
+bad *choice* on one means nothing, and I deliberately did not assert on choice quality.
+
+**Plus:** all **10,563** real ladder positions in the corpus replayed through the deploy entry point
+→ **0 agent errors**. Cold start (import → first decision) **0.22s**, matching the field's
+`remainingOverageTime` opening at 599.62 of 600 — no first-move timeout risk. Env spec read
+directly: `actTimeout` default **0** (no per-act cap), `runTimeout` **2000s**, so the 600s figure is
+the game's own pool.
+
+**Verdict: there is no crash, no illegal move, no timeout and no uncovered context to find.** This
+angle should not be opened again unless a submission actually errors.
+
+### The real find: the turn-order default was wrong for the ENTIRE FIELD, not for one deck
+
+The previous run found that specialist dispatch is blind before the board exists, so the generic
+`scorer._score_sub` decided the turn-order toss with an unmeasured rule ("going second is often
+better for a setup deck"), and fixed it *for Lucario* via a deck.csv fallback. I checked whether
+that generalises, because if it does the per-specialist patching is the wrong shape of fix.
+
+New `tools/first_turn_field.py` reads the episode zip, finds every IS_FIRST decision, attributes it
+to the answering seat's deck, labels the archetype and tabulates. **1,400 episodes, 305 answers,
+25 archetypes: YES 99.0% overall, and 100% in every one of the 9 archetypes with n ≥ 8** —
+Grimmsnarl 85/85, Fezandipiti 50/50, Lopunny/Froslass 33/33, Ogerpon 28/28, Dragapult 25/25,
+Kangaskhan 19/19, Cornerstone/Kangaskhan 10/10, Lucario 8/8, Lopunny 8/8. And of those same 305
+asked seats, the one that went first won **54.4%** — an independent replication of the forced mirror
+A/B's 54.0% ± 2.1 from an entirely different data source.
+
+So I fixed it at the source: **`scorer._score_sub` now answers YES at IS_FIRST** (commit `68c86c0`),
+with the evidence written into the branch it replaces. A specialist that fails to load, or an
+archetype we have not written one for, no longer concedes the opening turn.
+
+Also correcting the previous entry: `starmie_rules`, `fezandipiti_rules` and `dunsparce_rules`
+**already had** the pre-board fallback (fezandipiti's docstring records IS_FIRST YES 2,125/2,125 in
+its own corpus). The ones still without it — crustle, grimmsnarl, tusk, iono, cinderace,
+hops_snorlax — are no longer load-bearing now that the default itself is right.
+
+### v4 built and fully verified, deliberately not shipped
+`experiments/luc_majkel_v4.tar.gz` = v3 + the generic default.
+- Paired agreement, 4,074 elite decisions, v3 vs v4: **every bucket byte-identical** (all 53.73,
+  main 45.53, swing-or-end 88.00, other 67.04). Exactly as designed — on the shipped Lucario path
+  the specialist already answers, so this is pure defense-in-depth with **no expected live gain**.
+  That is precisely why it does not justify evicting v2.
+- `robust_probe` v4 vs the 153 field decks: 920 games / **135,341 decisions**, CLEAN.
+- Packed cabt mirror smoke on the EXTRACTED tarball: `steps=145 statuses=[DONE,DONE] rewards=[-1,1]`.
+- `pytest tests/` → 9 passed, the same 2 pre-existing mock-fixture failures, none new.
+It is ready to ship the moment there is a slot whose eviction costs nothing.
+
+### STRATEGY.md now exists ($30k × 8, due 2026-09-13)
+Flagged as the highest-value unclaimed thing in this workspace by the last three entries. Written,
+~200 lines, honest. It leads with the result other entrants can actually use — **your self-play
+arena is anti-predictive, and here is the number (93.8% local vs 462 live)** — then the real-field
+agreement harness that replaced it, the dispatch bug it found, the five well-powered negatives, and
+the three-layer verification stack above. `docs/strategy_report.md` is the stale June draft built
+around the search-plus-net thesis this workspace has since refuted; STRATEGY.md supersedes it and
+does not reuse it.
+
+### What the next run should do FIRST
+1. **Re-read 55390639 and 55390373.** +70.8 for v3 is the right sign for the turn-order fix but the
+   refs were ~2h old. This is the first clean live A/B we have; let it settle before evicting either.
+2. **Ship v4 when a slot is free that does not cost the A/B** (i.e. once v2 has settled and can be
+   evicted on its number). It is fully verified and strictly non-negative.
+3. **Do NOT open: robustness (closed here, three layers), search (four refutations), prize-trade
+   economics (double negative), in-turn energy/tempo sequencing.** That is four angles closed by
+   measurement. What is left is deck/pilot coverage.
+4. The only lever big enough to matter is still **a specialist for a top archetype we cannot fly**
+   (Kangaskhan/Latias 63.2%, Dragapult/Meowth 58.0%, Thwackey/Dipplin 59.5%). STRATEGY.md §7 sketches
+   the cheaper version of this: fit a specialist's constants to *frontier agreement* on that
+   archetype's corpus rather than hand-tuning, gated on the confound-free buckets and the §6
+   robustness stack. Every instrument is already archetype-agnostic except its corpus, and
+   `tools/harvest_lucario.py` is the template for building one.
+5. `MULLIGAN` (42) appears in **neither** our corpus nor 400 sampled real episodes — the engine
+   probably auto-resolves it. Confirm cheaply before anyone spends effort on it.

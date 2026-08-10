@@ -137,6 +137,45 @@ Result over 1500 games / ~135k decisions each, identical seeds:
 illegal moves, and uses ~1% of the game clock. The v8/v9 regression is a *play-quality* loss.
 Do not spend further slots hunting crashes unless a submission actually errors.
 
+### ROBUSTNESS IS CLOSED — exhausted 2026-08-10, three independent layers, all clean
+
+The result above was against 11 curated decks. It has now been pushed as far as it can usefully go.
+**Do not open this angle again unless a submission actually errors.**
+
+1. **Real field.** `robust_probe --decks-dir data/meta_aug/decks` against **all 153 real ladder
+   decklists** (both seats through the deploy path, eps=0.12), on the shipped v3 tree:
+   920 games / **134,454 decisions** — 0 exceptions, 0 illegal, 0 engine rejects, 0 hangs, 0 moves
+   over 1s. Latency p50/p99/max **0.33 / 232 / 268 ms**; worst cumulative game **6.1s of 600s**.
+   v4 re-run: same, clean.
+2. **Context coverage** (new `tools/ctx_fuzz.py`). The engine defines **49 `SelectContext` values**;
+   a normal game asks only some, and an unreached context is code shipped unexecuted. A 1,224-game
+   field sweep reaches **31/49** over 188,103 live decisions. Sampling **400 real episodes** from
+   the dump, the actual ladder exhibits **31** distinct contexts over 130,603 decisions. The only
+   real-field context our probe never reaches is **32 `TO_DECK_ENERGY` (3 occurrences in 130,603 =
+   0.002%)**; we additionally reach `36 DISABLE_ATTACK`, which the sample lacks. **So self-play
+   against the field's own decklists reproduces the field's state distribution** — layer 1's clean
+   result is not an artifact of narrow coverage.
+3. **Adversarial observation mutation** (`ctx_fuzz.py` phase 2). Captured observations rewritten
+   into states real play never produced: the same board under **each of the 49 contexts**;
+   degenerate bounds `(0,0) (n,n) (n+1,n+1) (2,1)`; empty/truncated option lists; optional keys
+   nulled and dropped; bench/hand/discard/active/prize/energyZone/stadium stripped; turn 0, turn
+   9999, and a *decided* game still asking; blanked option-record fields.
+   **325,070 mutants: 0 exceptions, 0 illegal selections, max latency 20 ms.**
+   (Only no-raise + usable-selection is asserted — a mutated board is not necessarily reachable, so
+   a bad *choice* on one means nothing. `minCount > n` and `minCount > maxCount` are exempted from
+   the legality assert because no legal answer exists.)
+4. **Real ladder positions:** all **10,563** records in `records_11447.jsonl` replayed through the
+   deploy entry point (`prize_agreement --all-games`) — **0 agent errors**.
+5. **Cold start:** import → first decision **0.22 s**, consistent with the field's
+   `remainingOverageTime` opening at 599.62 of 600. No first-move timeout risk.
+
+### Kaggle `cabt` env limits (read from the spec 2026-08-10)
+
+`actTimeout` default **0** (no per-act cap enforced by `kaggle_environments`), `runTimeout` default
+**2000 s** per episode, `episodeSteps` 10,000,000. The 600 s figure is the *game's own*
+`remainingOverageTime` pool, visible in every observation. Our worst game spends 6.1 s across both
+seats — ~1%.
+
 ## Pre-ship checklist
 
 0. Justify the ship from **real-field** evidence (`data/meta_aug/`) or a live score — never from an
@@ -347,13 +386,34 @@ requires active, bench, hand AND discard simultaneously empty, so it can only fi
 opening hand exists and no in-game decision changes. IS_FIRST agreement 2.2% → **97.8%**; paired on
 4,074 elite decisions no bucket regressed (all 52.90 → 53.73).
 
-**STILL BROKEN for every other specialist** (`crustle`, `grimmsnarl`, `starmie`, `tusk`,
-`fezandipiti`, `dunsparce`, `iono`, `cinderace`, `hops_snorlax`). Apply the same fallback before
-shipping any of them.
+### GENERALISED AND FIXED AT THE SOURCE (2026-08-10) — going first is right for the WHOLE field
+
+`tools/first_turn_field.py` (new) reads the episode zip directly, finds every IS_FIRST decision,
+attributes it to the answering seat's 60-card deck, labels the archetype and tabulates YES/NO.
+
+Over **1,400 episodes / 305 IS_FIRST answers / 25 archetypes**: **YES 99.0% overall, and 100% in
+every one of the 9 archetypes with n ≥ 8** (Grimmsnarl 85, Fezandipiti 50, Lopunny/Froslass 33,
+Ogerpon 28, Dragapult 25, Kangaskhan 19, Cornerstone/Kangaskhan 10, Lucario 8, Lopunny 8).
+Of those same 305 asked seats the one that ended up going first won **54.4%** — an independent
+replication of the forced mirror A/B's 54.0% ± 2.1 from a completely different data source.
+
+So this was never a Lucario fact. **`scorer._score_sub`'s IS_FIRST default is now `YES` (+150)**,
+committed `68c86c0`. That makes the fix archetype-independent: a specialist that fails to load, or
+a list we have not written one for, no longer concedes the opening turn.
+
+Paired A/B on 4,074 elite decisions, v3 vs v4: **every bucket byte-identical** (all 53.73%, main
+45.53%, swing-or-end 88.00%, other 67.04%) — confirming it is pure defense-in-depth on the shipped
+Lucario path, where the specialist already answers. Do not expect a live gain from it.
+
+Correction to the note above: `starmie_rules`, `fezandipiti_rules` and `dunsparce_rules` **already
+had** a pre-board deck.csv fallback (fezandipiti's docstring records IS_FIRST answered YES
+2,125/2,125 in its own corpus). Still without one, and now no longer load-bearing: `crustle`,
+`grimmsnarl`, `tusk`, `iono`, `cinderace`, `hops_snorlax`.
 
 **The general lesson:** any decision taken before the board reveals the archetype is decided by
-untested generic defaults. `SelectContext.MULLIGAN` (42) is the next candidate and has never been
-checked — it does not appear in our corpus at all.
+untested generic defaults. `SelectContext.MULLIGAN` (42) is the next candidate — it appears in
+neither our corpus nor 400 sampled real episodes, so the engine may auto-resolve it; confirm before
+spending effort.
 
 ## ENERGY / TEMPO SEQUENCING INSIDE THE TURN IS SETTLED — not our bottleneck (2026-08-09)
 
@@ -375,6 +435,8 @@ checked — it does not appear in our corpus at all.
 | `tools/attach_probe.py` | attach-target choice with the turn-ordering confound removed |
 | `tools/turn_audit.py` | **whole-TURN** audit: resources left unspent at the turn-ending decision |
 | `tools/first_turn_ab.py` | forced mirror A/B of a single binary once-per-game decision |
+| `tools/ctx_fuzz.py` | which of the 49 `SelectContext`s real play reaches + adversarial rewriting of captured observations into the ones it does not |
+| `tools/first_turn_field.py` | how the real ladder answers a pre-board decision, **split by archetype**, straight from the episode zip |
 
 `turn_audit.py` is the first instrument that scores turns rather than single decisions — both
 agreement harnesses are structurally blind to "ended the turn without spending the attachment".
