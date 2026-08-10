@@ -49,6 +49,14 @@ except Exception:
 # no measurable latency cost (p99 140.6 -> 144.1 ms). The gate is a pure cost filter — it cannot
 # create a false positive, because a positive is an engine-declared terminal win either way.
 PRIZE_GATE = 3
+# Verify inside forced SUB-SELECTS too (which card to play, where to attach), not just on the MAIN
+# menu? The win search does not actually need a MAIN menu -- search_begin works from any agent
+# observation -- so the MAIN restriction was an assumption, never a requirement. Measured with
+# tools/lethal_sub_cost.py over 3,607 real single-answer sub-selects: a win is provable from 186 of
+# them, the shipped answer KEEPS it in 174 and THROWS IT AWAY in 12. In those 12 the frontier player
+# who went on to win the game played the verifier's answer 7 times and ours 1 time -- the override is
+# corroborated from outside the proof. Latency p99 138 ms, p50 0.13 ms.
+ALLOW_SUB_SELECT = True
 # Require an ATTACK to already be on the root menu before searching? Shipped as False since
 # 2026-08-10 — see the comment at the gate in lethal_move().
 REQUIRE_ATTACK_OPTION = False
@@ -249,7 +257,12 @@ def lethal_move(obs_dict, decklist, prized_counter=None, defer_selection=None) -
         if select is None or state is None:
             return None
         if getattr(select, "context", None) != SelectContext.MAIN:
-            return None
+            # Sub-selects are single-answer questions the engine forces on us mid-action. A padded
+            # multi-select answer is not something the verifier can reason about, so only ever
+            # speak on a genuine single choice.
+            if not (ALLOW_SUB_SELECT and (getattr(select, "maxCount", 1) or 1) == 1
+                    and len(select.option) > 1):
+                return None
         if getattr(obs, "search_begin_input", None) is None:
             return None  # not a real-engine agent observation -> cannot search
         me_i = state.yourIndex

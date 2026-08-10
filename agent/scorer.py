@@ -527,8 +527,15 @@ def best_options(obs_dict) -> list[int]:
         # We only *prepare* the verifier's arguments here. The call itself now happens after the
         # scorer has produced its own answer, so the verifier can be handed that answer and stay
         # quiet whenever it already keeps the win (see lethal._keeps_the_win).
+        # The verifier is consulted on the MAIN menu AND on single-answer sub-selects. A proven win
+        # is just as easy to throw away below MAIN -- once the scorer has decided to PLAY a card the
+        # engine asks WHICH card, and nothing used to check that answer. lethal.ALLOW_SUB_SELECT
+        # gates the sub-select half inside lethal_move itself; the condition here only has to stop
+        # us paying for the call on forced/multi-answer selects, where there is nothing to choose.
         lethal_args = None
-        if (grimmsnarl or tusk or crustle or lucario or cinderace or starmie or dunsparce or iono or fezandipiti or hops_snorlax) and _lethal_move is not None and ctx == SelectContext.MAIN:
+        if ((grimmsnarl or tusk or crustle or lucario or cinderace or starmie or dunsparce or iono or fezandipiti or hops_snorlax)
+                and _lethal_move is not None
+                and (ctx == SelectContext.MAIN or (select.maxCount == 1 and n > 1))):
             try:
                 if grimmsnarl:
                     deck = _grimmsnarl.GRIMMSNARL_DECK
