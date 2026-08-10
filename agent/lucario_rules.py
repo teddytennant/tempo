@@ -537,6 +537,11 @@ def score_main(obs, o, me_i) -> float:
             has_attack, best_dmg = _best_attack_on_menu(obs, state, me_i)
             if not has_attack:
                 return -1.0          # the buff expires unused -> keep the card
+            if wall and _is_ex(_id(active)):
+                # Wall mode scores our ex attacks BELOW end-of-turn (they whiff for 0 into the
+                # damage-negating Crustle), so an ATTACK on the menu here does not mean we swing.
+                # Without this the buff is spent on a turn that ends without an attack.
+                return -1.0
             oa = _opp_active(state, me_i)
             hp = (oa.hp or 0) if oa is not None else 0
             if oa is not None and best_dmg < hp <= best_dmg + 30:
