@@ -941,3 +941,15 @@ score is the only arbiter. `main/attack-choice`, one of the two confound-free bu
    more dead ends closed cheaply.
 5. Still open and still the biggest lever: **a specialist for an archetype we cannot fly**
    (Kangaskhan/Latias 61.2% deck-only, Dragapult/Meowth 57.4%), and watching Lucario vs Grimmsnarl.
+
+**Addendum, 02:05 UTC (18 min after submitting v6).** Readings taken on the way out, recorded because
+they sharpen the "never conclude from a fresh reading" rule rather than because they mean anything:
+v6 `55393889` **600.0** (the entry rating — it has barely played), v4 `55392668` **539.3**, v3
+`55390639` **648.4**, v2 `55390373` **550.7**. **v4 has moved 685.6 → 539.3 in 85 minutes**, a 146-point
+swing on an artifact nobody touched. Any v4/v6 comparison before both settle is worthless. Also note
+this makes the *previous* run's "v3 − v2 = +103.7" look like it was read at a transient too.
+
+Did not use the remaining 3 slots. Every further submission tonight would evict v4, which is the
+control for the single-mechanism A/B this run set up, and there is no other verified candidate that
+beats it — v5 exists and is robustness-clean but the agreement harness says it is worse than both.
+An unused slot beats a wasted one.
