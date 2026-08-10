@@ -43,8 +43,15 @@ except Exception:
         _corrected_deck = None
 
 # Plausibility gate: only bother verifying lethal when the opponent has at most this many prizes
-# left. (A multi-prize sweep in one turn is essentially impossible with these decks.)
-PRIZE_GATE = 2
+# left. A single knockout yields at most THREE prizes (a Mega ex), so 3 — not 2 — is the largest
+# prize count from which one KO can end the game. Measured on 2,500 real ladder MAIN decisions
+# (tools/lethal_probe.py): raising 2 -> 3 finds 23 game-winning lines the gate used to hide, at
+# no measurable latency cost (p99 140.6 -> 144.1 ms). The gate is a pure cost filter — it cannot
+# create a false positive, because a positive is an engine-declared terminal win either way.
+PRIZE_GATE = 3
+# Require an ATTACK to already be on the root menu before searching? Shipped as False since
+# 2026-08-10 — see the comment at the gate in lethal_move().
+REQUIRE_ATTACK_OPTION = False
 # Hard search caps — keep it well under the move clock even in pathological positions.
 _MAX_DEPTH = 10       # selections deep into the turn (attach/evolve/ability/attack + sub-selects)
 _NODE_BUDGET = 600    # total search_step calls per verification
@@ -212,7 +219,16 @@ def lethal_move(obs_dict, decklist, prized_counter=None) -> list[int] | None:
         me_i = state.yourIndex
 
         # Cheap plausibility gate: only verify when a win this turn is conceivable.
-        if not _has_attack_option(select):
+        #
+        # NOTE: this used to also require `_has_attack_option(select)` — an ATTACK already on the
+        # root menu. That was the single largest hole in the verifier's coverage: the whole point of
+        # searching is to find lines that *enable* an attack (attach the energy, evolve, use the
+        # ability, then swing), and those start from a menu with no attack on it. Over 2,500 real
+        # ladder MAIN decisions the requirement hid 28 game-winning lines, and in 6 of them the
+        # heuristic went on to play a PLAY/ATTACH that made the win no longer provable
+        # (tools/lethal_cost.py). Dropping it cost nothing measurable: p99 latency 140.6 -> 144.1 ms.
+        # The flag is kept so tools/lethal_probe.py can still A/B the axis on any tree.
+        if REQUIRE_ATTACK_OPTION and not _has_attack_option(select):
             return None
         if not _win_plausible(state, me_i):
             return None
