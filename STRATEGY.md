@@ -274,6 +274,71 @@ about what was wrong with the agent. Four out of five were false.
 
 ---
 
+## 5b. The one place search *does* pay, and the condition it has to meet
+
+§5(1) says search does not beat the heuristic, and we stand by every number in it. But all four of
+those refutations refute the same object: a search whose leaf is an **estimate**, replacing the
+heuristic's ranking. There is a second kind, and it behaves completely differently.
+
+Our agent carries a verifier that searches the engine's own forward model for a sequence of actions
+that **wins the game this turn**. Its leaf value is the engine's terminal result. It cannot be wrong
+about the value of a leaf, so the mechanism that kills estimate-search — a leaf evaluation weaker
+than the heuristic's implicit tempo knowledge — does not apply to it.
+
+We had never measured its coverage. It turned out to be running on a fraction of the positions where
+it could have spoken, held back by two cost filters that had never been checked against anything:
+
+- **"Only search when the opponent has ≤2 prizes left."** A single knockout is worth up to **three**
+  prizes — any Mega ex. Three, not two, is the largest prize count from which one KO ends the game.
+- **"Only search when an attack is already on the menu."** This defeats the purpose. The lines worth
+  searching for are exactly the ones that must attach energy, evolve, or fire an ability *before* an
+  attack becomes available; those start from a menu with no attack on it.
+
+Replaying 2,500 real ladder decisions with one axis widened at a time: the prize gate hid **23**
+game-winning lines, the attack requirement hid **28**, and opening both took proven wins from **86 to
+140** with p99 latency essentially unchanged (140.6 → 144.1 ms). Two other axes — search depth and
+the node/time budget — we widened just as far and found **nothing** (depth 10 → 18 found *fewer*
+lines, losing one to the clock). Worth knowing which knobs are dead.
+
+Because the proof is taken under a determinized model of our own deck, a line needing a lucky draw
+could be a phantom. We check that directly: segment the corpus back into real games and ask how far
+each claim sits from the end of the game it was made in. **Median: 0 turns.** 87% of widened claims
+sit within one turn of the game actually ending, against 90% for the pre-existing gate. The claims
+land where games end.
+
+### And then widening it alone made the agent worse
+
+This is the part we think is worth other entrants' attention. Wider search, sound proofs, clean
+robustness — and agreement with frontier play **fell** (all 53.7 → 53.0, main 45.5 → 44.3,
+attack-choice 36.4 → 34.8).
+
+The diagnostic that explains it is three lines of engine calls. For every position the widening newly
+proves, fork the game, play **the agent's own move**, and search again:
+
+| what the heuristic did | count |
+|---|---|
+| kept the win provable | **63** |
+| played a card that made the win unprovable | **6** |
+| undecidable | 0 |
+
+The search was right 69 times and *useful* 6 times. In the other 63 it was overriding a strong prior
+on a turn that was already won — deviation with no upside, which is precisely the failure mode §5(1)
+identifies, arriving through a door we thought was closed to it.
+
+So the fix is not about the search at all. The verifier now runs **after** the heuristic, is handed
+the heuristic's answer, applies that answer in the fork, and **stays silent if the win is still
+provable**. It speaks only where it can prove the prior is wrong. Agreement with frontier play then
+moves the other way: all **53.7 → 54.5**, main **45.5 → 46.8**, attack-choice **36.4 → 37.6**, with
+the pure swing-or-end bucket unchanged at 88.0.
+
+**The general form, which is the part that transfers:** a strong hand-built prior deserves protection
+from search even when the search is *provably correct*, because most of the time the prior already
+achieves what the search proves and the deviation is free downside. Earlier work in this repo tried
+to buy that protection with a tuned score margin. A proof buys it exactly, for the cost of one extra
+fork.
+
+---
+
 ## 6. Verification: what we do before anything ships
 
 A submission that errors scores zero regardless of how well it plays, so this is a gate, not a
