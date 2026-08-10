@@ -249,3 +249,36 @@ Luca (submitted 2026-08-09 23:54) has taken first from Majkel1337, whose exact d
 Worth checking in the next dump whether Luca is on a new archetype — the deck-construction angle is
 closed on the evidence that our list *is* the frontier's list, and a change at the very top is the
 one thing that could re-open it.
+
+---
+
+## 2026-08-10, ~20:35 UTC — FINAL RUN
+
+Top of the ladder (Luca has dropped out of the top 9 since last night; Majkel1337 back to #1):
+
+| # | team | score | last submitted |
+|---|---|---|---|
+| 1 | **Majkel1337** | **1195.3** | 2026-08-08 |
+| 2 | James Cox & Henry Chao | 1182.6 | 2026-08-10 |
+| 3 | palsystem | 1181.6 | 2026-08-10 |
+| 4 | flg | 1172.9 | 2026-08-10 |
+| 5 | M Sato | 1160.2 | 2026-08-09 |
+| 6 | AlphaStarmie | 1159.9 | 2026-08-08 |
+| 7 | 李秉叡（ntumlnoob） | 1149.2 | 2026-08-10 |
+| 8 | LiamK | 1140.7 | 2026-08-10 |
+| 9 | カントー地方マスター | 1130.8 | 2026-08-10 |
+
+**Our final active pair (the loop is off; these sit until close on 2026-08-16):**
+
+| ref | artifact | what it is |
+|---|---|---|
+| `55414779` | `alakazam_fork.tar.gz` | Codex Sol Eclipse Alakazam v22, unmodified public fork. Identical payload scored **716.1** from this account on 2026-08-06. |
+| *(after 00:00 UTC)* | `mak1084_fork.tar.gz` | makthanithin "1084.5 Baseline" Mega Lucario ex, `):` compile fix only. |
+
+Slot 1's live reading walked 515.3 → 655.8 → 614.2 in the first ninety minutes — normal convergence
+noise, not a settled number. The pair replaces `luc_majkel_v7` (526.2) and `luc_majkel_v8` (489.8).
+
+**Calibration note for anyone reading these standings later:** the field's own scores move too.
+Majkel1337 read 1203.2 last night and 1195.3 tonight without resubmitting; Luca read 1212.1 last
+night and is outside the top nine tonight. Rank comparisons across days are only meaningful in
+hundreds.

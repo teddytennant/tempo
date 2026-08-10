@@ -539,3 +539,52 @@ We also want to flag the failure mode that cost us the most, because it is easy 
 spent weeks improving an agent against a metric that was pointing the wrong way, and the thing that
 finally exposed it was not a better model — it was asking *what did a strong player actually do on
 this exact board*, and being willing to publish the answer when it was 2.2%.
+
+---
+
+## 8. Addendum, 2026-08-10 — the number that reframes everything above
+
+Everything in §1–§7 compares our artifacts to *each other*. On the final day we built the harness we
+should have built first — `tools/fork_arena.py`, which plays two arbitrary *packed submission trees*
+against each other on the real engine by loading each side's `main.py` by file path under a private
+module name, so two foreign agents that both ship a `main.py` and a relative `deck.csv` do not
+collide. No porting step. That let us, for the first time, measure our agent against public agents
+rather than against ourselves. 60 games against each of seven independent published-notebook bots,
+seats alternated:
+
+| agent | vs the 7-bot pool |
+|---|---|
+| Codex Sol Eclipse Alakazam v22 (public) | 327/420 = **77.86%** [73.64, 81.57] |
+| makthanithin "1084.5 Baseline" (public) | 282/418 = **67.46%** [62.83, 71.78] |
+| **ours** | 145/420 = **34.52%** [30.14, 39.19] |
+
+Head-to-head over 400 games ours loses to the 1084.5 Baseline 83–317.
+
+**This does not overturn §3's claim that self-play arena win-rate is anti-predictive; it sharpens
+it.** That claim was measured with an arena whose opponents were *our own pilots on our own decks* —
+which measures which of our decks best exploits our own heuristics, and nothing else. Swap the
+opponents for foreign policies and the ordering matches the live ladder exactly (ours 490–530 live,
+the public forks 670–720). The correct statement is narrower and more useful than the one we made:
+**an arena is predictive to the extent that its opponents are not you.** Porting five or six
+published agents into your repo is a weekend of work and it is the highest-value thing in this
+writeup.
+
+The corollary is uncomfortable and we would rather state it than bury it: the specialist-authoring
+pipeline proposed in §7 was aimed at a policy roughly half as strong as free public code, and the
+agreement-harness gains we report — single-digit decisions out of 4,074 — were real but were
+rearranging a losing position. Our final two submissions are therefore public forks (credited in the
+submission descriptions), not our own pilot. The instruments stand; the agent they were built to
+improve does not.
+
+Two incidental findings, both of which cost a diagnosis cycle and both of which will bite anyone
+forking public work in this competition:
+
+- **`makthanithin/pokemon-tcg-ai-battle-1084-5-baseline` does not compile as published** — line 322
+  of its agent cell reads `) hi:` where it must read `):`. Fork it verbatim and validation fails.
+- **Kaggle execs your `main.py` with `globals() == {}`** (`kaggle_environments.agent.get_last_callable`
+  does `env = {}; exec(code_object, env)`). `__file__` is undefined and cwd is not the archive
+  directory, so the only reliable path to your own `deck.csv` is the absolute
+  `/kaggle_simulations/agent/deck.csv`. If your local smoke extracts the tarball to a temp directory
+  instead, a working agent resolves an empty deck, the environment rejects it (it takes each
+  player's deck from the step-0 action) and reports `statuses=['INVALID','INVALID']` with an empty
+  stderr. Stage your smoke at `/kaggle_simulations/agent`.
