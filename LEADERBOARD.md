@@ -216,3 +216,36 @@ Evicted `55392668` (v4, last read 493.5).
 Top of the ladder essentially unchanged: Majkel1337 1207.9, AlphaStarmie 1185.1, M Sato 1185.1,
 James Cox & Henry Chao 1172.1, palsystem 1170.0, Thai 1167.1, Luca 1165.9 (up from 1164.8),
 flg 1140.5.
+
+---
+
+## 2026-08-10 ~03:00 UTC — slot 5
+
+Active pair is now **55394411 (v7) + 55395183 (v8)**: identical `deck.csv`, differing in exactly
+`lucario_rules.py`, one mechanism (Premium Power Pro played on any turn we swing). Evicted
+`55393889` (v6, last read 520.0).
+
+**The noise floor is now measured, and it retires every live A/B in this file.** v3 `55390639`
+(648.4) and v4 `55392668` (493.5) are **policy-identical on the shipped Lucario path** and both are
+now frozen — **155 points apart**. Live refs the same night: v7 read **491.5 → 663.7 → 523.1** in
+40 minutes, v6 **543.1 → 495.7 → 520.0**. A single live score cannot resolve anything under about
+150 points; below that the honest answer is "unresolved".
+
+Team standing ~**4500 / 6689** on the live pair. Top of the ladder, with a new leader:
+
+| # | team | score |
+|---|---|---|
+| 1 | **Luca** | **1212.1** |
+| 2 | Majkel1337 | 1203.2 |
+| 3 | AlphaStarmie | 1189.6 |
+| 4 | M Sato | 1180.6 |
+| 5 | palsystem | 1170.0 |
+| 6 | James Cox & Henry Chao | 1167.6 |
+| 7 | Thai | 1163.3 |
+| 8 | Dipam Chakraborty | 1142.1 |
+| 9 | flg | 1132.0 |
+
+Luca (submitted 2026-08-09 23:54) has taken first from Majkel1337, whose exact decklist we ship.
+Worth checking in the next dump whether Luca is on a new archetype — the deck-construction angle is
+closed on the evidence that our list *is* the frontier's list, and a change at the very top is the
+one thing that could re-open it.

@@ -1125,3 +1125,204 @@ recorded deltas survive (v6−v4 was +32 decisions on main).
 Did not use the remaining 2 slots. v6 and v7 are the two strongest artifacts and differ by one
 measured mechanism; a third submission tonight would evict v6 and destroy the A/B for no candidate
 that beats it. An unused slot beats a wasted one.
+
+---
+
+## 2026-08-10 (UTC) — slot 5/5 — ANGLE: energy and tempo, and where we waste a turn
+
+**Submitted:** ref `55395183` `luc_majkel_v8.tar.gz` — "slot5 luc-majkel-v8". CLI: **1 submission
+remaining today** (today = v4 + v6 + v7 + v8 = 4; the harness prompt's count was off by one, the CLI
+is authoritative as always). Evicted `55393889` (v6). Active pair is now
+**55394411 (v7) + 55395183 (v8)**, a clean single-mechanism A/B on a byte-identical decklist.
+
+### First, the thing that invalidates the last three runs' score comparisons
+
+The last run asked for v3 vs v4, which are **policy-identical on the shipped Lucario path**. Both are
+now evicted and therefore frozen:
+
+| ref | policy | final frozen score |
+|---|---|---|
+| v3 `55390639` | identical to v4 | **648.4** |
+| v4 `55392668` | identical to v3 | **493.5** |
+
+**155 points between two artifacts that play the same game.** That is the answer to "how much live
+noise is there", and it is bigger than every live delta this workspace has ever reasoned from. Add
+today's readings on live refs: v7 `55394411` read **491.5 → 663.7 → 523.1** in 40 minutes; v6
+`55393889` read **543.1 → 495.7 → 520.0** in the same window. Team standing is **rank ~4500 of
+6689**; the leader board top is Luca 1212.1 / Majkel1337 1203.2 / AlphaStarmie 1189.6.
+
+**Operational consequence, and it should be treated as a rule now: a single live score cannot
+resolve a difference smaller than ~150 points, and eviction freezes whatever transient was showing.**
+Ship decisions must come from the offline harnesses. The live score is only useful for detecting a
+catastrophe (an errored submission, a dead archetype like the Crustle wall's 775 → 449 collapse).
+
+### The instrument the workspace was missing: a harness that scores a TURN
+
+Both agreement harnesses score one decision against the elite's answer at that decision. On MAIN
+that is contaminated by ordering: if the elite swings immediately and we attach first and swing
+second, we are marked wrong twice and played the identical turn. "Turn-ordering confound" has been
+the standing explanation for `main` = 46.6% against `swing-or-end` = 88.0%, and nobody had measured
+it.
+
+**`tools/turn_replay.py`** (new) measures it. Fork the engine at a turn's *first* decision, drive our
+own deploy entry point through the whole turn one `search_step` at a time until control passes to the
+opponent, and compare the two turns as **action multisets canonicalised to card identity** (option
+indices shift as a turn proceeds; card ids do not). Ordering is removed by construction.
+
+- **Fidelity control**: our agent answers the fork's first question identically to the live one in
+  **199/199**. Every replay ran to the end of the turn (188 `passed-to-opponent`, 11 `terminal`).
+- Over **199 real frontier turns**, on the shipped v7 tree:
+
+| per turn | elite | ours |
+|---|---|---|
+| attacked | 78.4% | 64.3% |
+| attached energy | 79.9% | 58.8% |
+| MAIN actions taken | 6.06 | 5.07 |
+| elite swung and we did not | — | 29 turns (14.6%) |
+| we swung and the elite did not | — | 1 turn (0.5%) |
+
+- Identical turn: **8.0% overall, but 66.7% in the no-draw bucket** (the bucket our determinized
+  deck cannot contaminate) against 3.3% where cards are drawn. **So the ordering confound is real
+  and large — and it is not the whole story.**
+
+### The finding, and why it is the one that ordering cannot explain away
+
+**`tools/card_use.py`** (new) never forks. It asks our agent the identical question on the elite's
+own menu and scores every option twice — offered / elite took / we took — so the take-rate gap is
+policy and nothing else. Over 4,000 real MAIN decisions:
+
+| option | offered | elite took | we took |
+|---|---|---|---|
+| **PLAY(Premium Power Pro)** | **1618** | **256 (15.8%)** | **4 (0.2%)** |
+| PLAY(Poké Pad) | 603 | 288 (47.8%) | 142 (23.5%) |
+| PLAY(Dusk Ball) | 581 | 301 (51.8%) | 173 (29.8%) |
+| ABILITY(Lunatone / Lunar Cycle) | 502 | 363 (72.3%) | 244 (48.6%) |
+| EVOLVE(Mega Lucario ex) | 448 | 197 (44.0%) | 433 (96.7%) |
+| EVOLVE(Hariyama) | 663 | 87 (13.1%) | 513 (77.4%) |
+
+Every row here is ordering-sensitive **except the first**. Re-ordering a turn changes *when* you
+play a card, never whether you ever do — so a 0.2% take rate on a card offered 1,618 times is a
+statement that we essentially never play it. The rows below it (we evolve early, they evolve late)
+are exactly what the ordering confound looks like and should not be chased.
+
+### The cause, and the frontier's actual rule derived rather than guessed
+
+`agent/lucario_rules.py` gated Premium Power Pro (+30 to every {F} attack this turn) on the +30
+**exactly** converting a swing into a knockout **and** the Active being in the Lucario line, and
+returned `-1.0` — below END, i.e. never — otherwise. On the frontier's own menus that guard is
+satisfied **83 times out of 2,552**.
+
+**`tools/ppp_probe.py`** (new) buckets those 2,552 real frontier offers by what a rule could key on:
+
+| bucket | offers | frontier played it |
+|---|---|---|
+| attack on the menu, +30 CONVERTS a KO | 136 | **41.9%** |
+| attack on the menu, does not convert | 386 | **29.0%** |
+| attack on the menu, already lethal | 963 | **23.7%** |
+| **no attack on the menu** | 1067 | **3.3%** |
+| active in Lucario line | 1281 | 19.8% |
+| active = Solrock | 675 | 18.2% |
+| active = Hariyama | 185 | 17.8% |
+| active = Lunatone | 276 | 3.6% |
+| *our shipped guard says PLAY* | *83* | *25.3%* |
+
+**One feature — is an ATTACK on the menu, i.e. are we swinging this turn — separates 3.3% from
+23.7–41.9%.** The KO conversion is a ~1.4x tie-break, not the rule. And the Lucario-line restriction
+is unjustified: Solrock and Hariyama are {F} too and the card boosts them identically. The reason
+the frontier can afford to be liberal is card economy: 4 copies behind Lunar Cycle (draw 3) and
+Lillie's Determination (draw 6), and a turn-scoped buff held in hand is worth exactly nothing at end
+of turn.
+
+### What shipped, and the placement that was measured and rejected
+
+Play it whenever an ATTACK is on the menu; **700** when the +30 exactly converts, **500** otherwise.
+Both sit above every non-game-winning ATTACK score (max ~450 = 100 + 300·0.3 + 60 Aura-Jab bias +
+200 KO) and **below every setup/search card**, so the buff is the last thing we do before swinging.
+
+**The alternative placement at 1520/1600 was built and measured and is rejected.** It overshoots the
+frontier (25.8% vs 15.8%) and drags the search items down with it — Poké Pad 23.5 → 17.6, Dusk Ball
+29.8 → 22.2, Fighting Gong 43.8 → 34.4 — because at that score it outranks them and displaces them at
+every single decision. Raw agreement on card_use's 4,000 MAIN decisions: v7 46.27%, **1520-variant
+46.52%, shipped 500-variant 46.67%**.
+
+Plus one guard the corpus could not have found: in **wall mode** our ex attacks score *below* END
+(they whiff into the damage-negating Crustle), so an ATTACK on the menu does not mean we swing.
+Without the guard we would spend the card on a turn that ends without an attack. Verified inert on
+this corpus (no wall positions in it), so it protects the Crustle matchup at zero measured cost.
+
+### Measured, with the baseline re-run in the same session
+
+`prize_agreement` over the 4,074 elite decisions. **v7 was run twice first**, because the last run
+established this harness is not deterministic where the verifier runs:
+
+| bucket | n | v7 run1 | v7 run2 | **v8** | delta |
+|---|---|---|---|---|---|
+| all | 4074 | 2223 (54.57) | 2223 (54.57) | **2235 (54.86)** | **+12** |
+| main | 2530 | 1183 (46.76) | 1180 (46.64) | **1191 (47.08)** | **+9.5** |
+| main/attack-available | 1712 | 701 | 698 | 708 | +8.5 |
+| main/elite-declined-attack | 1407 | 551 | 548 | **578 (41.08)** | **+28.5** |
+| main/elite-attacked | 305 | 150 | 150 | **130 (42.62)** | **−20** |
+| main/attack-choice+attacked | 133 | 60 | 60 | 49 | −11 |
+| main/attack-choice | 604 | 228 | 227 | 226 | −1.5 |
+| main/swing-or-end | 75 | 66 | 66 | 66 | 0 |
+| setup / other | 42 / 1502 | 30 / 1010 | 30 / 1013 | 30 / 1014 | 0 / +2.5 |
+
+v7's own run-to-run spread is **0–3 decisions**, so +12 on `all` and +9.5 on `main` clear it and
+−1.5 on `attack-choice` does not exist. **The two confound-free buckets — `swing-or-end` (88.00,
+unchanged) and `attack-choice` (flat) — did not move**, and the ±28.5/−20 split across
+elite-declined-attack and elite-attacked is the documented turn-ordering signature, identical in
+shape to v6's: we insert one more development action before the swing.
+
+Ordering-immune corroboration, which is what actually justifies the ship:
+- `card_use` Premium Power Pro **0.2% → 5.6%** (a third of the gap closed) with no other bucket
+  disturbed.
+- `turn_replay`'s turn-level "the elite played it and we did not" falls **80 → 48** over the same
+  199 turns, and turns-we-attacked goes **64.3% → 64.8%** — no swing is lost to the extra action.
+
+### The deck.csv footgun bit again — and it produced a coherent-looking fiction
+
+The repo's `agent/deck.csv` is a **Great Tusk** list, not what we ship. The first pass of every
+measurement above ran through it, routed to the *generic* pilot instead of the Lucario specialist,
+and returned a completely believable story: we "never" fire Lunatone's Lunar Cycle, we attach energy
+on 30% of turns to the elite's 83%, and we play Great Tusk 26 times out of a hand that does not
+contain it. RESEARCH.md carries an explicit HAZARD note about exactly this and it still cost a
+measurement cycle. **The tell was `PLAY(Great Tusk)` appearing in a Lucario corpus** — a card
+resolved from the observation's own hand cannot be a card the observation's player does not hold, so
+that row was proof the pilot was wrong before any number was worth reading. Every instrument added
+here prints the deck path it used; read it every time.
+
+### Verification (all green)
+- `robust_probe --src experiments/luc_majkel_v8_src` vs all **153 real ladder decklists**: 920 games
+  / **134,348 decisions** — 0 exceptions, 0 illegal, 0 engine rejects, 0 hangs, 0 moves over 1s.
+  p50/p99/max **0.32 / 251.5 / 477.3 ms**; worst cumulative game **21.5s of 600s** (3.6%, *down* from
+  v7's 33.6s). CLEAN.
+- Packed cabt mirror smoke on the EXTRACTED tarball: `steps=120 statuses=[DONE,DONE] rewards=[-1,1]`.
+- `pytest tests/` → **9 passed, 2 failed**, and both failures were confirmed present on the
+  pre-change tree (`git checkout HEAD~2 -- agent/lucario_rules.py`). None new.
+- Artifact diff vs v7: **exactly `lucario_rules.py`**; `deck.csv` byte-identical.
+
+### What the next run should do FIRST
+1. **Do not read `55395183` against `55394411` as a small number.** v3 and v4 are policy-identical
+   and finished 155 points apart. If the pair sits within ~150 points, the A/B is *unresolved*, and
+   saying so is the correct outcome — not picking the higher one.
+2. **Run `turn_replay` on the remaining rows of the `card_use` table, in the no-draw bucket only.**
+   Poké Pad 47.8 vs 23.5, Dusk Ball 51.8 vs 29.8 and Lunar Cycle 72.3 vs 48.6 are all large, but all
+   ordering-sensitive at the decision level — the turn-level fork is the only instrument that can
+   tell "we never do this" from "we do it later". `turn_replay` already reports both; the missing
+   piece is running it with enough no-draw turns (only 14–15 of 199 qualify) to be worth reading.
+   Raising `--n` to a few thousand turns is the cheap fix.
+3. **The energy-attachment gap is still open and is the biggest number on the board**: 79.9% of
+   frontier turns attach energy against our 58.8%. This run did not touch it. It is not the attach
+   *target* (RESEARCH has that at 89.8% de-confounded) — it is that we end turns without attaching
+   at all. `turn_replay` can localise it; `turn_audit`'s old "wasted_attach 3.6%" was measured in
+   self-play and does not describe play against the field's boards.
+4. **Point `--elite-move` (from `threat_probe`) at the MAIN-level `lethal` verifier.** Still the
+   cheapest outstanding check and still not done — it is the only instrument that separates "this
+   flags bad play" from "this flags bad positions".
+5. Unchanged and still the biggest structural lever: **a specialist for an archetype we cannot fly**
+   (Kangaskhan/Latias 61.2% deck-only, Dragapult/Meowth 57.4%) against a documented 0/32 piloting
+   failure. And watch Lucario vs Grimmsnarl (49.4% pooled, sliding).
+
+Did not use the last slot. v7 and v8 differ by one measured mechanism on a byte-identical decklist;
+a sixth submission tonight would evict v7 and destroy the A/B for no candidate that beats it. An
+unused slot beats a wasted one.

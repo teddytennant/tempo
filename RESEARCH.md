@@ -26,6 +26,30 @@ Consequences, all learned the expensive way:
 - RESEARCH.md's older "±10 between identical re-ships" figure was measured on *settled* June
   scores. It does not apply to same-day readings.
 
+### THE NOISE FLOOR IS ~150 POINTS — measured on two POLICY-IDENTICAL artifacts (2026-08-10)
+
+v3 `55390639` and v4 `55392668` are **byte-identical in behaviour on the shipped Lucario path** (v4
+only changes an `IS_FIRST` default the specialist already answers). Both are now evicted, so both
+scores are frozen and final:
+
+| ref | policy | frozen score |
+|---|---|---|
+| v3 `55390639` | identical to v4 | **648.4** |
+| v4 `55392668` | identical to v3 | **493.5** |
+
+**155 points apart on the same policy.** Corroborated by live refs read repeatedly the same night:
+v7 `55394411` **491.5 → 663.7 → 523.1** inside 40 minutes; v6 `55393889` **543.1 → 495.7 → 520.0**.
+
+**Rules that follow, and they supersede every live-A/B claim in this file:**
+- **A live score cannot resolve a difference smaller than ~150 points.** Do not rank two of our own
+  submissions on anything less. "Unresolved" is the correct answer, not "the higher one won".
+- **Eviction freezes a transient.** An old "settled" number belonging to an inactive ref is where
+  the random walk stopped, not where it converged.
+- The live score is still decisive for **catastrophes**: an errored submission, or an archetype
+  dying under the field (Crustle 775–795 → 449, a 330-point move).
+- Ship decisions therefore come from the offline harnesses (`prize_agreement`, `card_use`,
+  `turn_replay`), with the baseline **re-run in the same session** because they are not deterministic.
+
 ## Submission mechanics (verified working 2026-08-09)
 
 ```bash
@@ -595,6 +619,101 @@ spending effort.
 - **The attacks that skip an attach are correct.** All **24** real positions where the elite
   attached and we swung are **KO swings, 14 provably taking the opponent's last prizes**.
 
+### ⚠ RE-OPENED 2026-08-10 — that section was measured on the WRONG UNIT and the WRONG GAMES
+
+All three bullets above score single decisions, or score turns in **self-play**. Scoring whole turns
+**against the frontier's own boards** says something different:
+
+| per turn, 199 real frontier turns | elite | ours (v7) |
+|---|---|---|
+| attacked | 78.4% | 64.3% |
+| **attached energy** | **79.9%** | **58.8%** |
+| MAIN actions taken | 6.06 | 5.07 |
+| elite swung and we did not | — | 14.6% of turns |
+
+`turn_audit`'s "wasted_attach 3.6%" was measured in **self-play**, where our own bots never build
+the boards that make an attach necessary. It does not describe play against the field.
+**The 79.9%-vs-58.8% attachment gap is open and is the largest unexplained number on the board.**
+It is not the attach *target* (89.8% de-confounded, above) — it is ending turns without attaching.
+
+## THE TURN, NOT THE DECISION, IS THE RIGHT UNIT (2026-08-10)
+
+`tools/turn_replay.py` forks the engine at a turn's **first** decision and drives our own deploy
+entry point through the whole turn one `search_step` at a time until control passes to the opponent,
+then compares the two turns as **action multisets canonicalised to card identity** (option indices
+shift within a turn; card ids do not). Ordering is removed by construction, which is the confound
+every other harness here carries.
+
+- **Fidelity control, and it must be re-checked on any tree**: our agent answers the fork's first
+  question identically to the live one **199/199**. `dataclasses.asdict` on a forked observation is a
+  usable agent input; `search_begin_input` is None inside the fork, so `lethal.py` cannot run there
+  (~1% of decisions).
+- **The ordering confound is REAL AND LARGE**: identical-turn rate is 8.0% overall but **66.7% in
+  the no-draw bucket** vs 3.3% where cards are drawn. Only the no-draw bucket is clean (the fork
+  determinizes our deck), and only ~7% of turns qualify — raise `--n` a lot to read it.
+- **Two gotchas that cost real time.** The corpus omits zero-valued option fields while `asdict`
+  keeps them as `None`, so `opt.get(k, default)` silently yields `None` — use a helper that treats
+  `None` as the default, or every descriptor comes out as `PLAY(None)`. And `--src` must be a
+  Lucario **source tree**, never the repo root (see the deck.csv hazard below).
+
+### `tools/card_use.py` — the ordering-immune half
+
+Never forks: it asks our agent the identical question on the elite's own menu and scores every
+option **offered / elite took / we took**. A row where we are near **zero** cannot be explained by
+ordering (re-ordering a turn changes *when* you play a card, never whether you ever do); a row where
+we are merely *lower* usually can. Over 4,000 real MAIN decisions on v7:
+
+| option | offered | elite | ours |
+|---|---|---|---|
+| **PLAY(Premium Power Pro)** | 1618 | 15.8% | **0.2%** ← the only ordering-immune row |
+| PLAY(Poké Pad) | 603 | 47.8% | 23.5% |
+| PLAY(Dusk Ball) | 581 | 51.8% | 29.8% |
+| ABILITY(Lunatone / Lunar Cycle) | 502 | 72.3% | 48.6% |
+| EVOLVE(Mega Lucario ex) | 448 | 44.0% | 96.7% |
+| EVOLVE(Hariyama) | 663 | 13.1% | 77.4% |
+
+The last two rows are what the ordering confound *looks like* (we evolve early, they evolve late) —
+do not chase them without the turn-level fork.
+
+### The fix this produced: Premium Power Pro (shipped v8, `55395183`)
+
+`lucario_rules` gated the +30 {F} damage buff on it **exactly** converting a swing into a KO with the
+Active in the Lucario line, `-1.0` otherwise. That guard is satisfied on **83 of 2,552** frontier
+offers. `tools/ppp_probe.py` derives the frontier's real rule from its own 2,552 offers:
+
+| bucket | offers | frontier played it |
+|---|---|---|
+| attack on menu, +30 converts a KO | 136 | 41.9% |
+| attack on menu, does not convert | 386 | 29.0% |
+| attack on menu, already lethal | 963 | 23.7% |
+| **no attack on menu** | 1067 | **3.3%** |
+| Lucario line / Solrock / Hariyama active | 1281 / 675 / 185 | 19.8 / 18.2 / 17.8% |
+
+**"Is an ATTACK on the menu" is the whole rule**; the KO conversion is a ~1.4x tie-break and the
+Lucario-line restriction was unjustified (Solrock and Hariyama are {F} too). Shipped: 700 when the
++30 converts, else 500 — both above every non-game-winning ATTACK (max ~450) and **below every
+setup/search card**, so the buff is the last thing before the swing.
+**A placement at 1520 was measured and REJECTED**: it overshoots (25.8% vs 15.8%) and displaces the
+search items (Poké Pad 23.5 → 17.6, Dusk Ball 29.8 → 22.2). Raw agreement v7 46.27 / 1520-variant
+46.52 / **shipped 46.67**. Also skipped in wall mode with an ex active, where offered attacks score
+below END so "an attack is on the menu" does not mean we swing.
+
+`prize_agreement` v8 vs v7 (v7 run **twice** first — spread 0–3 decisions): all 2223 → **2235**,
+main 1183/1180 → **1191**, elite-declined-attack 551/548 → **578**, elite-attacked 150 → **130**,
+attack-choice and swing-or-end **unchanged**. Same turn-ordering signature as v6.
+
+## ⚠ THE `agent/deck.csv` FOOTGUN BIT AGAIN — and it fabricates plausible results (2026-08-10)
+
+The repo's `agent/deck.csv` is a **Great Tusk** list, not what we ship. Running the new instruments
+with `--src .` routed to the *generic* pilot and returned a completely coherent story: we "never"
+fire Lunatone's Lunar Cycle, we attach energy on 30% of turns to the frontier's 83%, we play Great
+Tusk 26 times. All of it fiction.
+
+**The tell**: `PLAY(Great Tusk)` in a *Lucario* corpus. A card resolved out of the observation's own
+hand cannot be a card that observation's player does not hold — so that single row proved the pilot
+was mis-routed before any number was worth reading. **Always pass a real source tree**
+(`experiments/luc_majkel_v*_src`), and read the deck path every instrument prints.
+
 ## New instruments (2026-08-09, all take `--src` for two-tree A/B)
 
 | tool | what it answers |
@@ -605,6 +724,9 @@ spending effort.
 | `tools/first_turn_ab.py` | forced mirror A/B of a single binary once-per-game decision |
 | `tools/ctx_fuzz.py` | which of the 49 `SelectContext`s real play reaches + adversarial rewriting of captured observations into the ones it does not |
 | `tools/first_turn_field.py` | how the real ladder answers a pre-board decision, **split by archetype**, straight from the episode zip |
+| `tools/turn_replay.py` (08-10) | **whole-turn** action multisets, ours vs the frontier's, with turn ordering removed by forking and playing the turn out |
+| `tools/card_use.py` (08-10) | offered / elite-took / we-took per option on the **identical menu** — the ordering-immune half |
+| `tools/ppp_probe.py` (08-10) | derives the frontier's rule for one card by bucketing its own offers; the template for "what is their actual condition?" |
 
 `turn_audit.py` is the first instrument that scores turns rather than single decisions — both
 agreement harnesses are structurally blind to "ended the turn without spending the attachment".

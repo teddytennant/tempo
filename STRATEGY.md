@@ -448,6 +448,78 @@ rewards — which is the same self-play validation game the competition runs on 
 
 ---
 
+## 6b. The unit of measurement was wrong: score the turn, not the decision
+
+Everything in §3 scores a single decision against what a strong player did at that decision. That
+measurement has a confound we named early, excused repeatedly, and never actually measured: **turn
+ordering**. If the frontier attacks immediately and we attach energy first and attack second, we are
+marked wrong twice and we played the *identical turn*. Top-level-menu agreement sitting at 46.6%
+while "swing or end the turn" sits at 88.0% is exactly the shape that confound produces, and for
+three weeks "it's the ordering confound" was an explanation we had no right to.
+
+So we measured it. `turn_replay` forks the engine at a turn's **first** decision, drives our own
+deployed entry point through the entire turn one search step at a time until control passes to the
+opponent, and compares the two turns as **action multisets canonicalised to card identity** — play
+Dusk Ball, attach a Fighting Energy to the benched Riolu, attack with Aura Jab — rather than to
+option indices, which shift as a turn proceeds. Ordering is removed by construction.
+
+Two results, and they point opposite ways.
+
+**The confound is real and large.** Turns where neither side drew a card (the only bucket our
+determinized deck cannot contaminate) match as multisets **66.7%** of the time, against 3.3% where
+cards were drawn and 8.0% overall. Most of the top-level-menu disagreement genuinely is sequencing.
+
+**And it was still hiding a real loss.** Per turn, over 199 real frontier turns, the frontier
+attacks on 78.4% of turns to our 64.3%, attaches energy on 79.9% to our 58.8%, and takes 6.06
+actions to our 5.07. Those gaps survive the de-confounding.
+
+The companion instrument is the cheap one and it is the one we would hand to another entrant first.
+`card_use` never forks: it asks our agent the *identical question on the strong player's own menu*
+and scores every option three ways — **offered / they took / we took**. The discriminator is simple:
+
+> A row where we sit near **zero** cannot be explained by ordering. Re-ordering a turn changes *when*
+> you play a card, never whether you ever play it. A row where we are merely *lower* usually can.
+
+On 4,000 real decisions exactly one row was near zero. Premium Power Pro — an item giving every one
+of your Fighting Pokémon +30 damage for the turn — was on the menu **1,618 times**. The frontier
+played it 256 times (15.8%). We played it **4** (0.2%). Everything else in the table (we evolve
+early and they evolve late, at 96.7% against 44.0%) is ordering and should not be chased.
+
+The cause was a guard we had written to look careful: play it only when the +30 *exactly* converts a
+swing into a knockout, and only with a specific attacker in the Active spot; otherwise score it
+below end-of-turn, i.e. never. On the frontier's own menus that guard is satisfied 83 times out of
+2,552.
+
+**Then we did the thing we should have done when we wrote the guard: we derived their rule from
+their own behaviour instead of inventing one.** Bucketing those 2,552 offers:
+
+| the position when it was offered | offers | they played it |
+|---|---|---|
+| an attack is on the menu, and +30 converts a KO | 136 | 41.9% |
+| an attack is on the menu, +30 does not convert | 386 | 29.0% |
+| an attack is on the menu, already lethal anyway | 963 | 23.7% |
+| **no attack on the menu** | 1067 | **3.3%** |
+| Active = our main attacker / Solrock / Hariyama | 1281 / 675 / 185 | 19.8% / 18.2% / 17.8% |
+
+One feature — *are we swinging this turn* — separates 3.3% from 23.7–41.9%. The knockout conversion
+we had built the entire guard around is a 1.4× tie-break. The attacker restriction is worth nothing:
+all three are Fighting Pokémon and the card boosts them identically. And the reason a strong player
+can be this liberal is card economy, not damage maths: the deck runs four copies behind two draw
+engines, and a buff that expires at end of turn is worth zero in hand.
+
+Two things generalise beyond one card:
+
+1. **Pick the unit of measurement that matches the decision.** A greedy per-decision scorer is
+   evaluated per decision, so a whole class of "we never do this at all" errors is invisible to it —
+   they look like ordering noise. Only scoring the turn separates them.
+2. **When you write a conditional rule, check how often the condition fires on real positions.** Ours
+   fired on 3% of the positions the card was offered in. That number was always available, cost
+   nothing to compute, and would have caught the bug the day it was written.
+
+The honest scoreboard for the fix: agreement over 4,074 frontier decisions moves 2,223 → 2,235 with
+a same-session baseline spread of 0–3 decisions, the two ordering-free buckets do not move, and the
+ordering-immune take rate goes 0.2% → 5.6% — a third of the gap, not all of it.
+
 ## 7. What we would do with more time, stated honestly
 
 Our agent is a strong pilot of one archetype and a mediocre pilot of every other. The measurements
