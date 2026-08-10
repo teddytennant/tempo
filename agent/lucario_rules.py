@@ -52,6 +52,14 @@ MEGA_LUCARIO = 678  # Stage1 Mega-ex F, 340HP. Aura Jab (982) / Mega Brave (983)
 DUSK_BALL = 1102
 SWITCH = 1123
 PREMIUM_POWER_PRO = 1141   # item: F attacks +30 dmg to opp Active this turn
+# Where Premium Power Pro sits in the ranking. The buff lasts the whole turn, so WHEN we play it
+# inside the turn is free -- but the scorer is greedy per decision, so the score decides which other
+# development it displaces. Both values sit above every non-game-winning ATTACK score (max ~450:
+# 100 + 300*0.3 + 60 Aura-Jab bias + 200 KO) and below every setup/search card, making the buff the
+# last thing we do before swinging rather than something that pushes Dusk Ball / Poke Pad down the
+# menu. See the guard in score_main for the frontier measurement these replaced.
+PPP_SCORE = 500.0
+PPP_SCORE_KO = 700.0
 FIGHTING_GONG = 1142       # item: search deck for Basic F energy or Basic F Pokemon
 POKE_PAD = 1152            # item: search deck for a non-Rule-Box Pokemon
 HEROS_CAPE = 1159          # tool: +100 HP
@@ -365,6 +373,28 @@ def _attack_damage(attacker, attack_id, defender) -> int:
     return dmg
 
 
+def _best_attack_on_menu(obs, state, me_i):
+    """(is an ATTACK offered right now, best damage among the attacks offered).
+
+    A turn-scoped damage buff is only ever worth a card on a turn we actually swing, and "an ATTACK
+    is on this menu" is the engine's own statement that we can swing right now. Measured on the
+    frontier's 2,552 real Premium Power Pro offers (tools/ppp_probe.py), this single feature
+    separates a 3.3% play rate from a 23.7-41.9% one -- it is the rule, and the damage arithmetic
+    below it is only a tie-break."""
+    best, found = 0, False
+    try:
+        active = _my_active(state, me_i)
+        defender = _opp_active(state, me_i)
+        for opt in (obs.select.option or []):
+            if opt.type != OptionType.ATTACK:
+                continue
+            found = True
+            best = max(best, _attack_damage(active, opt.attackId, defender))
+    except Exception:
+        return found, best
+    return found, best
+
+
 def _opponent_value(p) -> float:
     """How tempting an opponent Pokemon is as a KO / gust target (prize value + investment)."""
     v = 0.0
@@ -482,19 +512,36 @@ def score_main(obs, o, me_i) -> float:
                     return 1700.0   # a juicier KO sits on their bench -> drag it up
             return -1.0
 
-        # Premium Power Pro: +30 to F attacks this turn. Worth it ONLY on a turn we attack and
-        # only when the +30 converts a non-KO swing into a KO (mirrors the notebooks).
+        # Premium Power Pro: +30 to EVERY {F} attack this turn.
+        #
+        # This used to fire only when the +30 turned a specific swing into a knockout AND the Active
+        # was in the Lucario line; everything else returned -1.0, i.e. below END, i.e. never. On the
+        # frontier's own menus that guard is satisfied 83 times out of 2,552 offers, and the net
+        # effect was that we played this card on 4 of 1,618 offers (0.2%) where the #1 player
+        # (LB 1203.5) played it on 256 (15.8%) -- the largest single behavioural gap in the deck,
+        # and the only one in tools/card_use.py that turn ORDERING cannot explain (re-ordering a
+        # turn moves *when* you play a card, not whether you ever do).
+        #
+        # tools/ppp_probe.py buckets those 2,552 real offers by what a rule could key on:
+        #   attack on the menu, +30 converts a KO    136 offers   41.9% played
+        #   attack on the menu, does not convert     386          29.0%
+        #   attack on the menu, already lethal       963          23.7%
+        #   NO attack on the menu                   1067           3.3%
+        #   active = Lucario line 19.8% | Solrock 18.2% | Hariyama 17.8%
+        # So the rule is "are we swinging this turn", the KO-conversion case is a tie-break worth
+        # ~1.4x, and the Lucario-line restriction is unjustified -- Solrock, Hariyama and Makuhita
+        # are {F} too and the card boosts them identically. Card economy is not the constraint in a
+        # deck running 4 copies behind Lunar Cycle (draw 3) and Lillie's Determination (draw 6):
+        # a turn-scoped buff held in hand is worth nothing at end of turn.
         if cid == PREMIUM_POWER_PRO:
+            has_attack, best_dmg = _best_attack_on_menu(obs, state, me_i)
+            if not has_attack:
+                return -1.0          # the buff expires unused -> keep the card
             oa = _opp_active(state, me_i)
-            if oa is None or _id(active) not in _LUCARIO_LINE:
-                return -1.0
-            hp = oa.hp or 0
-            best_dmg = 0
-            for aid in (AURA_JAB, MEGA_BRAVE):
-                best_dmg = max(best_dmg, _attack_damage(active, aid, oa))
-            if best_dmg < hp <= best_dmg + 30:   # the +30 is exactly what turns it into a KO
-                return 1600.0
-            return -1.0
+            hp = (oa.hp or 0) if oa is not None else 0
+            if oa is not None and best_dmg < hp <= best_dmg + 30:
+                return PPP_SCORE_KO  # the +30 is exactly what turns this swing into a KO
+            return PPP_SCORE         # otherwise still buff the swing
 
         # Gravity Mountain: situational (Stage-2 -30HP). Low unless a stadium war matters.
         if cid == GRAVITY_MOUNTAIN:
