@@ -45,3 +45,7 @@ data/bc_top/
 data/leaderboard_*.csv
 data/ep_aug/
 experiments/
+
+# Fresh episode dumps (21 GB unzipped, re-downloadable)
+data/ep_aug09/
+data/ep_aug/

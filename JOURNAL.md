@@ -652,3 +652,139 @@ does not reuse it.
    `tools/harvest_lucario.py` is the template for building one.
 5. `MULLIGAN` (42) appears in **neither** our corpus nor 400 sampled real episodes — the engine
    probably auto-resolves it. Confirm cheaply before anyone spends effort on it.
+
+---
+
+## 2026-08-10 (UTC) — slot 2/5 — ANGLE: deck construction, rebuilt from scratch vs the current meta
+
+**Submitted:** ref `55392668` `luc_majkel_v4.tar.gz` — "slot2 luc-majkel-v4". CLI reported
+**4 submissions remaining today**, which settles the ambiguity the last two runs argued about: the
+cap **does** reset at UTC midnight, and the 4 entries stamped 2026-08-09 20:40–22:21 did not count
+against today. Evicted `55390373` (v2, settled 550.7); active pair is now
+**55390639 (v3, 654.7) + 55392668 (v4)**.
+
+### The angle is CLOSED, and it closes on the strongest evidence in this file
+
+**Our decklist is already the frontier's decklist, and the frontier has not changed it.** The
+2026-08-09 dump was published 00:08 UTC; I pulled it 15 minutes later. In it, **Majkel1337 (rank 1,
+LB 1203.5) played 26 games: 23 on a list BYTE-IDENTICAL to the one we ship**, and 3 on a
+Kangaskhan/Latias build he is evidently testing. Three more field teams — Marshall_Maximizer,
+Oleksandr_Savsunenko, 李秉叡_ntumlnoob_ — ship the identical 60 cards. Of the five Lucario teams in
+the field only `seven` runs a different build (Cornerstone Mask Ogerpon ex / Rock Fighting Energy /
+Xerosic's Machinations, no Hariyama line, 4 Wally's). **Imitation has no headroom left: we already
+copy the consensus optimum.**
+
+**And the deck is not what separates #1 from everyone else.** Those four teams pilot the *same 60
+cards* at LB **1203.5 / 892.4 / 879.9 / unrated** — a 320-point spread on an identical list. This is
+the cleanest statement of the workspace's central problem we have ever had a number for:
+**deck construction is not the lever; the policy is.**
+
+### De-confounding the archetype table — the confound is real but SMALL (a negative on my own hypothesis)
+
+I opened the run believing the archetype win-rate table in RESEARCH.md was badly pilot-confounded,
+and the band table looked like it agreed: Grimmsnarl wins **41.9%** in the 850–1000 band and
+**50.7%** at 1000+ on the same 60 cards. That reading is wrong — banding the *seat* does not control
+who it played, and a seat in a low band is largely playing *up*.
+
+Doing it properly (`tools/deck_strength.py`, new): fit
+`P(i beats j) = sigmoid(a·(r_i − r_j)/400 + d[arch_i] − d[arch_j])` over **4,555 decided games** with
+both pilots' public-LB ratings joined, CIs bootstrapped over **games** (not seats — the two seats of
+one game are one observation). The rating term is healthy on the fresh dump: **a = 0.352 (CI
+0.212–0.489)**, i.e. a 400-point edge is worth **58.7%**.
+
+Verdict: **mean |raw − deck-only| = 2.4 points, largest relative reshuffle 4.7.** The raw table was
+usable after all. Rating-controlled deck-only win rates:
+
+| archetype | seats | raw | deck-only | 95% CI |
+|---|---|---|---|---|
+| Kangaskhan / Latias | 79 | 63.3 | **61.2** | 50.6–68.9 |
+| Meganium / Hydrapple | 60 | 58.3 | 61.1 | 52.1–72.1 |
+| Dragapult / Meowth | 633 | 59.4 | **57.4** | 53.7–60.9 |
+| **Lucario / Hariyama** | 331 | 55.9 | **53.8** | 48.4–57.6 |
+| Fezandipiti / Alakazam | 1617 | 49.9 | 47.3 | 44.6–50.3 |
+| Marnie's Grimmsnarl | 2926 | 46.6 | 44.1 | 41.7–46.3 |
+| Kangaskhan / Crustle | 332 | 38.9 | **37.3** | 32.4–43.0 |
+
+Two things fall out. **The June wall is now the worst deck in the field at 37.3%** — re-shipping it
+was correctly abandoned. And **the entire ceiling on a perfect archetype switch is ~+3.6 points**
+(Lucario 53.8 → Dragapult 57.4), which we pilot at **0/32**. The unexploited lever is smaller than
+this file has been assuming.
+
+### The field we face IS the global field — no band-specific tech
+
+We sit at **LB 654.4, rank 2932 of 6679 — dead on the median**, so matchmaking pairs us mid-ladder,
+not with the top 20. I expected a band-specific meta worth teching against. There is none
+(`tools/meta_bands.py`, new): in the 550–700 band the opponents are Grimmsnarl **29.1%** /
+Fezandipiti-Alakazam **22.0%** / Lopunny-Froslass **11.9%**, against a global 30.4 / 17.8 / 10.7.
+Same field. Nothing to tech for.
+
+**And the list is fine against it.** Lucario's field-share-weighted expected win rate over **83% of
+the 08-09 field is 57.2%** — vs Grimmsnarl 46.7% (n=105), Fezandipiti/Alakazam 49.1% (n=57),
+Lopunny/Froslass 90.0% (n=30), Dragapult/Meowth 62.5% (n=24). Its one bad matchup,
+Kangaskhan/Latias **22.5%**, is ~1% of the field we face — and no field player runs a tech answer we
+could copy, so there is nothing to imitate even if we wanted it. Day-over-day the meta is stable
+(Grimmsnarl 30.2→32.1% share, Fezandipiti 18.0→17.7%, Lucario 3.3→3.6% at 53.6→55.9%).
+
+The one number worth watching: **Lucario vs Grimmsnarl moved 53.4% (n=73, 08-08) → 46.7% (n=105,
+08-09)**; pooled 49.4% over n=178. Grimmsnarl is 32% of the field. Not a crisis, but if it keeps
+sliding it is the first real meta threat to the list.
+
+### Public LB rating is a weak predictor of head-to-head — read with care
+
+On the 08-08 dump joined to today's LB, the higher-rated seat won only **53.7%** overall, and
+**50.5%** in the n=202 games with a **400+ point gap**. The fresh 08-09 dump is much healthier
+(a=0.352 vs 0.185), and the difference between the two is almost certainly *stale ratings* — today's
+LB score reflects a team's current 2 active submissions, not the agent that played a two-day-old
+episode. Treat that as a caveat on the join, not as a fact about the game. It is still a third
+independent demonstration that **a single LB number is a noisy read on agent strength.**
+
+### New instruments
+| tool | what it answers |
+|---|---|
+| `tools/frontier_deck_watch.py` | "is the player whose list we copy still playing it?" — prefix-scans a day of replays for a named team's exact 60-card registrations and diffs them against our `deck.csv` |
+| `tools/deck_strength.py` | intrinsic archetype strength with pilot rating held fixed, + the **fast prefix extractor** |
+| `tools/meta_bands.py` | the metagame split by rating band, and the field-weighted deck-choice objective |
+
+**The prefix scanner is the durable win.** A replay is ~6 MB but the team names, the result and both
+60-card registrations all sit in the first few hundred KB, so it reads 512 KB instead of the whole
+file — a full parse of the 21 GB unzipped dump becomes ~1 minute. **Validated against the full JSON
+parse on the 08-08 zip: 4,428 games and 238 LB-join drops, identical to the byte.** `deck_strength`
+uses it by default with `--slow` to fall back.
+
+### What was shipped, and why it is not a deck change
+The angle produced no deck change, so this ships **v4** — built and fully verified last run and held
+back only because shipping it would have cost the v3/v2 live A/B. That A/B has now done its job
+(**v3 − v2 = +103.7**, the sign the turn-order fix predicts, with v2 settled at 550.7 across two
+readings), and v2 contributes nothing to the LB under v3's 654.7. Expect **no live gain** from v4 —
+paired on 4,074 elite decisions it is byte-identical to v3 in every bucket, because on the shipped
+Lucario path the specialist already answers IS_FIRST. The reason to ship is the playbook's rule:
+end the day with the two strongest agents active, and v3 + v4 beats v3 + v2.
+
+### Verification (all green)
+- Packed cabt mirror smoke on the EXTRACTED tarball: `steps=124 statuses=[DONE,DONE] rewards=[-1,1]`.
+- `robust_probe` vs all **153 real ladder decklists**: 300 games / **44,586 agent decisions** — 0
+  exceptions, 0 illegal, 0 rejects, 0 hangs, 0 moves over 1s. p50/p99/max **0.24/136.8/252.6 ms**;
+  worst cumulative game 4.8s of 600s. **CLEAN.**
+- Fast prefix scanner validated against full parse (above).
+- NB `robust_probe --src` wants a **source tree** (`agent/` + `search/`), not the extracted tarball,
+  and `--opps` is a comma-separated list of deck *names* inside `--decks-dir`. Build the field list
+  with `ls data/meta_aug/decks/*.csv | xargs -n1 basename | sed 's/\.csv$//' | paste -sd,`.
+
+### What the next run should do FIRST
+1. **Read 55392668 and 55390639.** They should be near-identical by construction; a large gap
+   between them is evidence about **live score noise on identical policies**, which is worth more
+   than the ship itself. Do not conclude from a same-day reading.
+2. **Do NOT open deck construction again.** Closed here: our list is the frontier's list, four teams
+   span 320 LB points on it, the band meta equals the global meta, and the whole archetype-switch
+   ceiling is ~+3.6 points against a 0/32 piloting failure. **Five angles are now closed by
+   measurement** — robustness, search (4 refutations), prize-trade economics, in-turn energy/tempo,
+   and deck construction.
+3. The remaining lever is what it has been for three runs: **play quality on the list we already
+   fly.** The agreement harness says where — `main` 45.5%, `attack-available` 39.1%,
+   `attack-choice` 36.4% are the low buckets, and unlike `swing-or-end` (88.0%) they have real room.
+   Attack *choice* is the one with the least turn-ordering confound left in it.
+4. Watch **Lucario vs Grimmsnarl** (49.4% pooled, sliding) and **Kangaskhan/Latias** — the archetype
+   with the best deck-only strength (61.2%), our worst matchup (22.5%), and now the thing the #1
+   player is testing. If it grows past ~5% of the field the list stops being fine.
+5. `STRATEGY.md` exists and is strong. This run adds three sections worth having: the identical-list
+   / 320-point-spread result, the rating-controlled de-confounding method, and the prefix-scan trick.

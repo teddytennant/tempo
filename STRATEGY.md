@@ -58,6 +58,75 @@ new specialist, and that is the central structural constraint on our method.
 This is worth stating plainly because it is the trap the competition is built around: **deck list
 and decision policy are one joint problem.** A "better deck" you cannot pilot is a worse deck.
 
+### 2a. The measurement that settles it: 320 leaderboard points on an identical 60 cards
+
+We ship a copy of the rank-1 player's Lucario/Hariyama list. In the 2026-08-09 dump, **Majkel1337
+(rank 1, 1203.5) played 23 of his 26 games on a list byte-identical to ours**, so the list is not
+stale and not misread. Three further teams ship the *same 60 cards* — and they sit at **892.4,
+879.9 and unrated.**
+
+> **The same decklist spans 320 leaderboard points across four teams.** Whatever separates rank 1
+> from rank 844, it is not in the deck.
+
+If you are choosing between tuning your list and tuning your policy, that number is the answer.
+We have spent slots on both; only one of them has ever moved our score.
+
+### 2b. Archetype win rate is confounded by pilot strength — but less than you would guess
+
+The table above is what everyone computes, and it is not a deck ranking: an archetype's win rate is
+partly the deck and partly whoever plays it. Marnie's Grimmsnarl wins **41.9%** among 850–1000 rated
+seats and **50.7%** among 1000+ seats, on the same 60 cards.
+
+We de-confounded it properly rather than trusting that band split (which overstates the problem —
+banding the *seat* does not control who it played, and a low-band seat is largely playing up). For
+each decided game, with `r` the pilots' public-leaderboard ratings, fit
+
+```
+P(i beats j) = sigmoid( a·(r_i − r_j)/400 + d[arch_i] − d[arch_j] )
+```
+
+over 4,555 games, with confidence intervals bootstrapped over **games** — not seats, since the two
+seats of one game are a single observation and resampling seats would halve the interval. `a` is
+a built-in sanity check on the rating join: it came out **0.352 (95% CI 0.212–0.489)**, i.e. a
+400-point edge is worth 58.7%.
+
+**Verdict: the confound is real but small — mean |raw − deck-only| = 2.4 points, largest relative
+reshuffle 4.7.** The naive table was usable after all. That is a negative on our own hypothesis and
+we report it as one.
+
+| archetype | seats | raw win% | deck-only win% | 95% CI |
+|---|---|---|---|---|
+| Kangaskhan / Latias | 79 | 63.3 | 61.2 | 50.6–68.9 |
+| Dragapult / Meowth | 633 | 59.4 | 57.4 | 53.7–60.9 |
+| Lucario / Hariyama | 331 | 55.9 | **53.8** | 48.4–57.6 |
+| Fezandipiti / Alakazam | 1617 | 49.9 | 47.3 | 44.6–50.3 |
+| Marnie's Grimmsnarl | 2926 | 46.6 | 44.1 | 41.7–46.3 |
+| Kangaskhan / Crustle | 332 | 38.9 | 37.3 | 32.4–43.0 |
+
+Two consequences we act on. The archetype that carried us to 776–795 in the June field
+(Kangaskhan/Crustle) is now **the worst deck in the field at 37.3%** — a live score is a rating
+against the field *of the day*, and it decays as the field improves. And the **entire ceiling on a
+perfect archetype switch is about +3.6 points** of win rate (53.8 → 57.4), against a deck we pilot
+at 0/32. The lever everyone reaches for first is smaller than it looks.
+
+### 2c. One caveat if you replicate this: a joined rating goes stale in days
+
+The same model on the *previous* day's dump, joined to the same leaderboard, gives a = 0.185 (CI
+0.02–0.37), and the higher-rated seat wins only 53.7% overall and **50.5% in the games with a 400+
+point gap**. The leaderboard score reflects a team's *current* two active submissions, not the agent
+that played a two-day-old episode. Join ratings to the freshest dump you have, and treat `a` as the
+diagnostic that tells you whether your join survived.
+
+### 2d. A practical note: you do not need to parse the dump
+
+The dump is ~21 GB unzipped and a replay is ~6 MB, but `info.TeamNames`, `rewards` and both 60-card
+deck registrations all live in the **first few hundred KB** — the key order is
+`configuration, description, id, info, …, rewards, …, steps`, and the deck registrations are the
+first actions inside `steps`. Reading 512 KB per file and regexing those three things out turns a
+20-minute full parse into about a minute, which is the difference between "check the frontier's list
+every run" and "check it when there is time." We validated it against the full parse: **4,428 games
+and 238 rating-join drops, identical to the byte**, with 3 of 4,668 replays unusable.
+
 ---
 
 ## 3. The result we would most like other entrants to have: your arena is lying to you

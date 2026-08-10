@@ -446,3 +446,91 @@ tool that defaults to it silently routes through the *generic* pilot and every n
 this produced a fake "35.9% of turns waste the bench" that evaporated on the right list.
 `turn_audit.py` and `first_turn_ab.py` prefer the packed tree's own `agent/deck.csv` and **print the
 deck path they used — check it.**
+
+## DECK CONSTRUCTION IS SETTLED — our list IS the frontier's list (2026-08-10)
+
+**Do not spend another slot rebuilding or teching the decklist.** Five things close it.
+
+1. **The frontier has not changed its list, and we already ship it byte-for-byte.** In the
+   2026-08-09 dump **Majkel1337 (rank 1, LB 1203.5) played 23 of 26 games on a list identical to our
+   `deck.csv`** (the other 3 on a Kangaskhan/Latias build he is testing). Three more field teams
+   ship the identical 60 cards (Marshall_Maximizer, Oleksandr_Savsunenko, 李秉叡_ntumlnoob_); of the
+   five Lucario teams only `seven` differs. Imitation has no headroom left.
+2. **The deck is not what separates #1 from the field.** Those four teams pilot the *same 60 cards*
+   at LB **1203.5 / 892.4 / 879.9 / unrated** — a **320-point spread on an identical list**.
+3. **The band meta equals the global meta.** We are LB 654.4, **rank 2932 of 6679, dead median**, so
+   matchmaking pairs us mid-ladder. The 550–700 band faces Grimmsnarl 29.1% / Fezandipiti-Alakazam
+   22.0% / Lopunny-Froslass 11.9% vs a global 30.4 / 17.8 / 10.7. **No band-specific tech exists.**
+4. **The list is fine against that field:** field-share-weighted **57.2%** over 83% of the 08-09
+   field. Worst matchup Kangaskhan/Latias 22.5% is ~1% of what we face, and no field player runs a
+   tech answer we could copy.
+5. **The whole archetype-switch ceiling is ~+3.6 points** (see the de-confounded table below), against
+   a documented 0/32 piloting failure on the deck that would earn it.
+
+### Rating-controlled archetype strength — the confound is REAL BUT SMALL (`tools/deck_strength.py`)
+
+The raw archetype win% is confounded by pilot quality, and the seat-banded table exaggerates it
+(Grimmsnarl 41.9% at 850–1000 vs 50.7% at 1000+ — but banding the *seat* does not control who it
+played; a low-band seat is largely playing up). Fit instead
+
+    P(i beats j) = sigmoid( a·(r_i − r_j)/400 + d[arch_i] − d[arch_j] )
+
+over 4,555 decided games with both pilots' public-LB ratings joined, CIs bootstrapped over **games**
+(the two seats of one game are one observation). Rating term on the fresh dump **a = 0.352 (CI
+0.212–0.489)** — a 400-point edge is worth 58.7%, so the join works.
+
+**Result: mean |raw − deck-only| = 2.4 points, largest relative reshuffle 4.7. The raw table was
+usable after all.** Deck-only win rates (2026-08-09):
+
+| archetype | seats | raw | deck-only | 95% CI |
+|---|---|---|---|---|
+| Kangaskhan / Latias | 79 | 63.3 | 61.2 | 50.6–68.9 |
+| Dragapult / Meowth | 633 | 59.4 | 57.4 | 53.7–60.9 |
+| **Lucario / Hariyama** | 331 | 55.9 | **53.8** | 48.4–57.6 |
+| Fezandipiti / Alakazam | 1617 | 49.9 | 47.3 | 44.6–50.3 |
+| Marnie's Grimmsnarl | 2926 | 46.6 | 44.1 | 41.7–46.3 |
+| **Kangaskhan / Crustle** | 332 | 38.9 | **37.3** | 32.4–43.0 |
+
+**The June wall is now the worst deck in the field (37.3%)** — abandoning it was right.
+
+### ⚠ A joined LB rating goes stale fast
+
+Same model on the **08-08** dump joined to the 2026-08-10 LB gives a = 0.185 (CI 0.02–0.37), and the
+higher-rated seat wins only 53.7% overall / **50.5% in the n=202 games with a 400+ point gap**. On
+the one-day-fresher dump a = 0.352. The LB score reflects a team's *current* 2 active submissions,
+not the agent that played a two-day-old episode. **Join ratings to the freshest dump available.**
+
+### Prefix scanning — read a 21 GB dump in ~1 minute (`tools/frontier_deck_watch.py`)
+
+A replay is ~6 MB, but `info.TeamNames`, `rewards` and both 60-card deck registrations all sit in
+the first few hundred KB (key order is `configuration, description, id, info, …, rewards, …, steps`,
+and the deck registrations are the first actions in `steps`). Reading **512 KB** per file and
+regexing out those three things replaces a full JSON parse.
+**Validated against the full parse on the 08-08 zip: 4,428 games and 238 LB-join drops, identical to
+the byte** (3/4668 replays unusable, a 0.06% sampling loss). `deck_strength.py` uses it by default;
+`--slow` restores the full parse.
+
+### Deck/meta instruments (2026-08-10)
+
+| tool | what it answers |
+|---|---|
+| `tools/frontier_deck_watch.py` | is the player whose list we copy still playing it? diffs their exact registrations against our `deck.csv` |
+| `tools/deck_strength.py` | intrinsic archetype strength with pilot rating held fixed; also the fast extractor + `data/meta_aug/seats*.csv` cache |
+| `tools/meta_bands.py` | the metagame split by rating band + the field-weighted deck-choice objective |
+
+Fresh dumps: `kaggle datasets download -d kaggle/pokemon-tcg-ai-battle-episodes-YYYY-MM-DD`, published
+~00:08 UTC for the previous day. Full LB with ratings:
+`kaggle competitions leaderboard -c pokemon-tcg-ai-battle -d -p data/lb_now` (then unzip).
+
+### `robust_probe` invocation gotchas (cost 2 failed runs on 2026-08-10)
+
+- `--src` wants a **source tree** with `agent/` + `search/` (e.g. `experiments/luc_majkel_v4_src`),
+  **not** the extracted tarball, whose `deck.csv` is at the root.
+- `--opps` is a comma-separated list of deck **names** inside `--decks-dir`, defaulting to a curated
+  11. For the real field: ``--opps "$(ls data/meta_aug/decks/*.csv | xargs -n1 basename | sed 's/\.csv$//' | paste -sd,)"``
+
+## Daily cap resets at UTC midnight (confirmed 2026-08-10)
+
+Two runs argued about this. Submitting at 00:40 UTC with 4 entries stamped the previous day
+20:40–22:21 returned **"4 submissions remaining today"** — the previous day's entries do not count.
+The CLI's remaining-count line is the only reliable read; the harness prompt's count can be stale.

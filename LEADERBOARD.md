@@ -141,3 +141,36 @@ both before building on it. Active pair unchanged: 55390639 + 55390373 (no submi
 Top of the ladder for scale: Majkel1337 1203.5, M Sato 1190.8, AlphaStarmie 1189.4; the top-8 /
 prize cut sits around **1128**. We are ~500 short, and §2 of STRATEGY.md is the reason: our pilot is
 strong on one archetype and unusable on the 58–63% archetypes the leaders fly.
+
+## 2026-08-10 ~00:40 UTC — the A/B retired, and where we actually stand on the ladder
+
+| ref | build | reading |
+|---|---|---|
+| 55392668 (v4, NEW) | v3 + generic IS_FIRST default | pending |
+| 55390639 (v3) | Lucario/Majkel + turn-order fix | **654.7** |
+| 55390373 (v2, evicted this run) | Lucario/Majkel + verifier-deck fix | 550.7 (settled, 2 readings) |
+| 55389997 (v1, evicted) | Lucario/Majkel baseline | 505.7 |
+
+**v3 − v2 = +103.7** on the final reading (was +70.8 two hours earlier), with v2 stable at 550.7
+across both readings and v3 drifting up 621.5 → 654.7. The sign the turn-order fix predicts, twice,
+with the control settled. That is as much as this A/B was ever going to tell us, so v2 was evicted;
+it contributed nothing to the LB under v3 anyway.
+
+**v4 is expected to score the same as v3** — paired on 4,074 elite decisions the two are
+byte-identical in every bucket. That makes the v3/v4 pair an accidental but useful instrument:
+**a measurement of live-score noise between two policies that are provably identical on our path.**
+Read both next run before drawing any conclusion from any other score delta in this file.
+
+### Our actual position (full LB pulled 2026-08-10 00:19)
+
+**Rank 2932 of 6679 teams, score 654.4 — dead on the median** (LB deciles: 355 / 452 / 520 / 576 /
+626 / 674 / 717 / 760 / 840). Consequence for deck choice: matchmaking pairs us mid-ladder, and the
+550–700 band's field is the *same* as the global field (Grimmsnarl 29.1% / Fezandipiti-Alakazam
+22.0% / Lopunny-Froslass 11.9%). There is no soft band to farm and no band-specific tech.
+
+Top of the ladder: Majkel1337 1203.5, AlphaStarmie 1189.4, M Sato 1185.1, James Cox & Henry Chao
+1169.7, palsystem 1166.1, Thai 1162.5. Prize cut (top 8) sits at ~1120.
+
+**And Majkel1337 plays our exact 60 cards** — 23 of 26 games in the 2026-08-09 dump. The ~550-point
+gap between us and rank 1 is entirely policy, not deck. Three other teams ship the identical list at
+892.4, 879.9 and unrated: **a 320-point spread on the same 60 cards.**
