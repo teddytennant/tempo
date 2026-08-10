@@ -824,3 +824,116 @@ Fresh dumps: `kaggle datasets download -d kaggle/pokemon-tcg-ai-battle-episodes-
 Two runs argued about this. Submitting at 00:40 UTC with 4 entries stamped the previous day
 20:40–22:21 returned **"4 submissions remaining today"** — the previous day's entries do not count.
 The CLI's remaining-count line is the only reliable read; the harness prompt's count can be stale.
+
+## ⛔ OUR OWN AGENT IS THE WEAKEST THING ON THE BOARD — measured 2026-08-10, and it ends the rebuild line
+
+Every number in this file above was produced by comparing *our* artifacts to *each other*. Nobody
+had ever played our shipped agent against a foreign one at scale. `tools/fork_arena.py` +
+`tools/fork_gauntlet.sh` (new, below) do that. 60 games against each of the seven independent
+published-notebook bots in `agent/bots/`, real cg engine, seats alternated:
+
+| agent | aggregate vs the 7-bot pool | 95% CI |
+|---|---|---|
+| Codex Sol Eclipse Alakazam v22 (public fork) | **327/420 = 77.86%** | [73.64, 81.57] |
+| raunakdey07 "Advanced Heuristic Agent" (same Alakazam deck) | **327/420 = 77.86%** | [73.64, 81.57] |
+| pllinas "Alakazam Rising Tide v21" (same Alakazam deck) | **325/420 = 77.38%** | [73.14, 81.12] |
+| makthanithin "1084.5 Baseline" (Mega Lucario ex) | 282/418 = 67.46% | [62.83, 71.78] |
+| prvsiyan "Souta 1208 Loader" (Mega Lopunny / Dudunsparce) | 156/280 = 55.71% | [49.86, 61.42] |
+| **our `luc_majkel_v8`** | **145/420 = 34.52%** | [30.14, 39.19] |
+
+Per-bot, our v8 reads crustle 16.7, crustle_hardened 13.3, baseline950 25.0, dragapult 35.0,
+abomasnow 28.3, iono 26.7 — it only beats ragingbolt (96.7). Head-to-head it loses to the 1084.5
+Baseline **83–317 (20.75%)** over 400 games and to Alakazam **1–7** in the smoke.
+
+**This reframes, rather than contradicts, "OUR LOCAL ARENA IS ANTI-PREDICTIVE" above.** That
+section was measured with `par_eval`, whose opponents are *our own pilots on our own decks* — it
+measures which of our decks best exploits our heuristics. The bots in `agent/bots/` are foreign
+policies, and against those the ordering matches the live scores (v8 ≈ 490–530 live vs the forks'
+670–720). **Foreign-opponent win-rate looks predictive; same-family win-rate does not.**
+
+Consequence: the whole "tune the Lucario specialist" line was optimising a policy that is roughly
+half as strong as free public code. Nine months of agreement-harness work moved `main` agreement by
+single-digit decisions while the gap to a public fork was 43 points of win-rate. **If this project
+is ever picked up again, start from a public fork and measure with `fork_gauntlet`, not from
+`agent/scorer.py`.**
+
+## The three "Codex Sol Eclipse Alakazam" notebooks are ONE byte-identical agent (2026-08-10)
+
+`jazivxt/codex-sol-eclipse-alakazam`, `ravi123a321at/codex-sol-eclipse-alakazam-20a31c` and
+`romanrozen/strong-start-baseline-agent-v10-lb-950` all embed the same `MAIN_SOURCE` blob —
+sha256 `f31eba2e819ee2b3…`, 55,612 bytes, final callable `codex_sol_eclipse_alakazam_v22`, deck
+`alakazam_courage_v22` (60 cards, 21 unique). Do not evaluate them separately.
+
+Note the third title is stale: the kernel still says "[STRONG START]: Baseline Agent V10 | LB 950+"
+but its *content* is the Alakazam agent, not the Mega Lucario baseline that `agent/bots/bot_baseline950.py`
+ports. **Titles in this competition are not evidence about content or score.** Two more instances:
+`prvsiyan/ptcg-rmy-surface-souta-1208-loader-v1` explicitly disclaims the 1208 in its own text (that
+score belongs to an external row `55137818`; the embedded clean-room agent "has no official Kaggle
+score"), and the "1084.5" baseline's own V1 scored 672.1 from this account in June.
+
+**This exact Alakazam payload scored 716.1 from this account on 2026-08-06** (ref `55288207`,
+"Notebook Codex Sol Eclipse Alakazam | Version 1") — the only recent, current-field live score we
+have for any artifact, ours or forked.
+
+## ⚠ THE PUBLISHED "1084.5 Baseline" NOTEBOOK DOES NOT COMPILE (2026-08-10)
+
+`makthanithin/pokemon-tcg-ai-battle-1084-5-baseline`, `%%writefile main.py` cell, line 322:
+
+```python
+                    ) hi:          # <- should be ):
+                        continue
+```
+
+A stray token inside the Crustle guard. Fork it as published and you get a SyntaxError and a failed
+validation game. `):` is the only fix needed and restores the guard the surrounding code describes
+(do not swing Mega Lucario ex into Crustle 345).
+
+## ⚠ KAGGLE EXECS `main.py` WITH `globals() == {}` — the deck-path trap that fakes an INVALID agent
+
+`kaggle_environments.agent.get_last_callable` does `env = {}; exec(code_object, env)`. So inside a
+submitted `main.py`:
+- **`__file__` is undefined**,
+- **cwd is not the archive directory** (Kaggle only *appends* the archive dir to `sys.path`),
+- so the only path that reliably resolves the agent's own `deck.csv` is the absolute
+  **`/kaggle_simulations/agent/deck.csv`**.
+
+Our `agent/main.py` survives locally because it also scans every `sys.path` entry for `deck.csv`.
+Most public agents do not: extract one to a `mktemp` dir and its deck resolution silently returns
+`[]`, the env rejects a 0-card deck, and a perfectly good agent reports
+`steps=2 statuses=['INVALID','INVALID']` with an empty stderr. This cost a full diagnosis cycle on
+an agent that was never broken.
+
+**Therefore: the packed smoke must extract to `/kaggle_simulations/agent`, not to a temp dir.**
+`tools/pack_fork.sh` does. Create it once with
+`sudo mkdir -p /kaggle_simulations && sudo chown -R $(id -u):$(id -g) /kaggle_simulations`.
+The env also takes each player's deck from the **step-0 action** (`cabt.py`: `decks = [state[0].action,
+state[1].action]`, rejected unless `len == 60`), which is why an empty deck fails there and nowhere else.
+
+## New instruments for evaluating FOREIGN agents (2026-08-10)
+
+- **`tools/fork_arena.py`** — head-to-head between two arbitrary packed trees. Each side's `main.py`
+  is loaded by file path under a private module name with cwd and `sys.path` set to its own
+  directory, so two foreign agents that both call their entry file `main.py` and both read a
+  relative `deck.csv` do not collide. `--entry-a/--entry-b` for agents whose entry point is not
+  called `agent` (e.g. `mega_lopunny_cleanroom_entrypoint`). Seats alternate; reports Wilson CI,
+  per-side exception counts, per-move latency and worst cumulative game clock.
+  ```
+  ./scripts/run.sh -m tools.fork_arena --a experiments/fork_alakazam --b experiments/luc_majkel_v8_src/agent --games 400 --workers 14
+  ```
+- **`tools/fork_gauntlet.sh <src> <label> <games> [workers] [entry]`** — the same, against all seven
+  `agent/bots/` opponents, with an aggregate. The field proxy; **this is the number to ship on.**
+- **`tools/extract_nb_agent.py <notebook> <outdir>`** — pulls a submittable `(main.py, deck.csv)` out
+  of any of the four shapes public agents ship in (`%%writefile` + DECK list, `MAIN_SOURCE`/`DECK_SOURCE`
+  triple-quoted pair, base64 `PAYLOAD_B64` dict, plain `.py` kernel). Hard-fails on a non-60-card
+  deck or a non-compiling `main.py`, so a bad extraction dies here instead of in Kaggle validation.
+- **`tools/pack_fork.sh <src> <out.tar.gz>`** — packs `main.py` + `deck.csv` (+ `group.txt`) + `cg/`
+  and runs the real cabt validation episode on the extracted archive.
+- `experiments/botdir_*` — thin `main.py` wrappers so the `agent/bots/` ports are usable as
+  fork_arena opponents.
+
+## Deferred submission across the UTC cap reset
+
+`scripts/submit_after_utc_midnight.sh <tarball> <message-file>` waits for the UTC date to roll over
+(+2 min slack), submits once, and prints the submissions list to confirm. Use it when a run starts
+with the day's cap already spent and the artifact is already built and smoked — do not hold a slot
+open by hand.

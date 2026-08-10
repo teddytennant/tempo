@@ -1326,3 +1326,119 @@ here prints the deck path it used; read it every time.
 Did not use the last slot. v7 and v8 differ by one measured mechanism on a byte-identical decklist;
 a sixth submission tonight would evict v7 and destroy the A/B for no candidate that beats it. An
 unused slot beats a wasted one.
+
+---
+
+## 2026-08-10 (UTC) — FINAL POKÉMON RUN — the loop is OFF
+
+**This was the last run. Teddy has turned the nightly loop off; whatever is active below is the
+final answer and it sits untouched until the competition closes 2026-08-16.**
+
+**ANGLE:** fork the strongest public agent, improve it only if the improvement is provable, submit
+exactly two, stop.
+
+### Blocked on the cap for half the run, and that shaped everything
+
+The day's 5 submissions were already spent by 02:57 UTC (v4/v6/v7/v8). The CLI printed
+**"0 submissions remaining today"** right after this run's one available submission. So slot 1 went
+out at 19:27 UTC and slot 2 is armed to fire after the UTC reset via
+`scripts/submit_after_utc_midnight.sh`, which waits for the date to roll over, submits once, and
+prints the submissions list to confirm.
+
+### The measurement that should have been made months ago
+
+Every comparison in this journal before today was *our artifacts against each other*. Nobody had
+played our shipped agent against a foreign one at scale, because there was no harness that could
+load a foreign packed tree. `tools/fork_arena.py` (new) is that harness: it loads each side's
+`main.py` by file path under a private module name with cwd and `sys.path` set to that side's own
+directory, so two agents that both call their entry file `main.py` and both read a relative
+`deck.csv` do not collide. No porting step — which is what made this expensive before.
+`tools/fork_gauntlet.sh` (new) runs it against all seven independent published-notebook bots in
+`agent/bots/`, 60 games each, seats alternated:
+
+| agent | vs the 7-bot pool | 95% CI |
+|---|---|---|
+| **Codex Sol Eclipse Alakazam v22** | **327/420 = 77.86%** | [73.64, 81.57] |
+| raunakdey07 "Advanced Heuristic Agent" (same deck) | 327/420 = 77.86% | [73.64, 81.57] |
+| pllinas "Alakazam Rising Tide v21" (same deck) | 325/420 = 77.38% | [73.14, 81.12] |
+| **makthanithin "1084.5 Baseline"** (Mega Lucario ex) | 282/418 = 67.46% | [62.83, 71.78] |
+| prvsiyan "Souta 1208 Loader" (Mega Lopunny) | 156/280 = 55.71% | [49.86, 61.42] |
+| **our `luc_majkel_v8`** | **145/420 = 34.52%** | [30.14, 39.19] |
+
+**Our own agent is the weakest thing on the board by 33 points of win-rate.** Per bot it reads
+crustle 16.7, crustle_hardened 13.3, baseline950 25.0, dragapult 35.0, abomasnow 28.3, iono 26.7,
+and only beats ragingbolt (96.7). Head-to-head over 400 games it loses to the 1084.5 Baseline
+**83–317**. This is not the "our arena is anti-predictive" effect from RESEARCH.md: that was
+measured in `par_eval`, whose opponents are *our own pilots on our own decks*. Against foreign
+policies the ordering matches the live scores (v8 490–530 live; the forks 670–720). So the
+rebuild-our-own-pilot line was optimising something roughly half as strong as free public code,
+and every agreement-harness gain of the last week was rearranging deck chairs.
+
+### Two bugs found in public artifacts, one of which would have failed validation
+
+1. **`makthanithin/pokemon-tcg-ai-battle-1084-5-baseline` does not compile as published.** Line 322
+   of its `%%writefile main.py` cell reads `) hi:` where it must read `):`, a stray token inside the
+   Crustle guard. Fork it verbatim and you get a SyntaxError and a failed validation game. `):` is
+   the only edit in the artifact we ship and it restores exactly the guard the surrounding code
+   describes.
+2. **Kaggle execs `main.py` with `globals() == {}`** (`kaggle_environments.agent.get_last_callable`:
+   `env = {}; exec(code_object, env)`). `__file__` is undefined and cwd is not the archive dir, so
+   the only path that resolves an agent's own `deck.csv` is the absolute
+   `/kaggle_simulations/agent/deck.csv`. Extracting a tarball to a `mktemp` dir for the packed smoke
+   therefore makes the deck resolve to `[]`, the env rejects a 0-card deck (`cabt.py` takes each
+   player's deck from the **step-0 action**), and a perfectly good agent reports
+   `steps=2 statuses=['INVALID','INVALID']` with an empty stderr. That is exactly what happened to
+   Alakazam here and it cost a full diagnosis cycle. `tools/pack_fork.sh` now extracts to
+   `/kaggle_simulations/agent`, and with that the real cabt mirror episode runs clean.
+
+### Titles are not evidence
+
+The three "Codex Sol Eclipse Alakazam" notebooks (jazivxt, ravi123a321at, and — despite its stale
+title — `romanrozen/strong-start-baseline-agent-v10-lb-950`) embed a **byte-identical** payload,
+sha256 `f31eba2e819ee2b3…`. `prvsiyan/…-souta-1208-loader-v1` disclaims the 1208 in its own text
+(that score belongs to external row `55137818`; its embedded agent has no Kaggle score), and it
+measures 55.71% here on a Mega Lopunny/Dudunsparce list that the 2026-08-08 dump puts at 41.4%
+deck-only. The "1084.5" baseline's own V1 scored **672.1** from this account in June.
+
+### SUBMISSION 1 of 2 — `55414779` `alakazam_fork.tar.gz`, 19:27 UTC
+
+Codex Sol Eclipse Alakazam v22, **shipped unmodified**. Chosen because it is the only artifact with
+a recent current-field live score from this account: **the identical payload settled at 716.1 on
+2026-08-06** (ref `55288207`). Offline it beats our v8 87.5% and the 1084.5 Baseline **338–62
+(84.5%)** over 400 games. Validation **COMPLETE** (no error); live reading walked 515.3 → 655.8 in
+the first ninety minutes, which is the usual convergence shape and not yet a settled number.
+
+### SUBMISSION 2 of 2 — `mak1084_fork.tar.gz`, armed for just after 00:00 UTC
+
+The 1084.5 Baseline with the `):` fix. **Deliberately not a second Alakazam.** A 400-game mirror
+between raunakdey07's implementation and v22's finished **203–197, 50.75% [45.87, 55.62]** — the
+Alakazam variants are the same deck and are statistically indistinguishable, so a second one would
+be a second rating draw of one policy, which buys nothing on a max-of-two leaderboard.
+
+The Lucario fork is a genuine hedge instead. Re-measured at n=200 rather than 60, Alakazam v22 vs
+the Dragapult bot is **47.50% [40.69, 54.40]** while the Lucario fork is **64.00% [57.14, 70.33]** —
+not the collapse the 60-game read suggested, but a separated gap against the second-largest
+archetype on the ladder (633 seats, 57.4% deck-only). And Lucario/Hariyama is the better *list* on
+real ladder evidence: 53.83% deck-only over 331 seats against Fezandipiti/Alakazam's 47.34% over
+1617. Two slots is exactly the budget for covering both hypotheses — "the Alakazam pilot is much
+stronger" and "the Lucario deck is the stronger list".
+
+### Verification
+- Both artifacts pass the **real** `kaggle_environments` cabt mirror episode on the EXTRACTED
+  tarball staged at `/kaggle_simulations/agent`: Alakazam `steps=175 statuses=[DONE,DONE]
+  rewards=[-1,1]`, Lucario `steps=150 statuses=[DONE,DONE]`.
+- Across 418 gauntlet + 400 head-to-head games each: **0 exceptions, 0 engine rejects, 0 illegal
+  selections**. Worst cumulative agent clock in one game: Alakazam 21.4s, Lucario 0.4s, both against
+  a 600s budget. Max single move: Alakazam 857ms, Lucario 70ms.
+- Archive layout `main.py` + `deck.csv` (+ `group.txt`) + `cg/` at the root; engine `SetTestSeed`
+  ABI check clean; decks verified at exactly 60 cards.
+
+### Did NOT do, on purpose
+No tweak to either fork beyond the compile fix. RESEARCH.md documents two replicated ~85-point live
+regressions from editing a proven artifact on a green local eval, and with two shots and no feedback
+loop afterwards there is no way to gate a change. The brief's own instruction applies: an unmodified
+strong fork beats a gambled one.
+
+### If anyone ever picks this up again
+Start from a public fork and measure with `tools/fork_gauntlet.sh`. Do not start from
+`agent/scorer.py` — the 34.52% row above is what nine months of that produced against the field.
