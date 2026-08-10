@@ -194,13 +194,49 @@ def _dfs(search_id, obs, me_i: int, depth: int, budget: _Budget) -> bool:
     return False
 
 
-def lethal_move(obs_dict, decklist, prized_counter=None) -> list[int] | None:
+def _keeps_the_win(root_id, root_select, defer_selection, me_i: int) -> bool:
+    """Apply the scorer's own move in the fork and ask whether a win is still provable after it.
+
+    Returns False when there is no scorer move to test, when the move is not a legal selection for
+    the fork, or on any engine error — i.e. anything unclear means "do not defer", so the verifier
+    keeps its proof rather than trusting an unverified move."""
+    if not defer_selection:
+        return False
+    n = len(root_select.option)
+    sel = [i for i in defer_selection if isinstance(i, int) and 0 <= i < n]
+    if not sel or len(sel) != len(defer_selection):
+        return False
+    child = None
+    try:
+        child = search_step(root_id, sel)
+        return bool(_dfs(child.searchId, child.observation, me_i, 1, _Budget()))
+    except Exception:
+        return False
+    finally:
+        if child is not None:
+            try:
+                search_release(child.searchId)
+            except Exception:
+                pass
+
+
+def lethal_move(obs_dict, decklist, prized_counter=None, defer_selection=None) -> list[int] | None:
     """If a verified game-winning sequence exists from the current MAIN decision, return the
     selection that plays its first action; otherwise None. Never raises.
 
     `prized_counter` (a collections.Counter of card_id->count from PrizeTracker.prized_cards(), or
     None) lets the determinization seat our known-prized cards in the prize zone instead of the
-    draw pile, so a verified lethal can never rely on a card that is actually prized."""
+    draw pile, so a verified lethal can never rely on a card that is actually prized.
+
+    `defer_selection` is the move the heuristic scorer would play if we said nothing. When it is
+    given, a proof is not by itself a reason to override: we apply the scorer's own move in the fork
+    and search again, and if the win is STILL provable after it we return None and let the scorer
+    have its way. Measured on 2,500 real ladder MAIN decisions (tools/lethal_cost.py), the scorer
+    keeps the win alive in 63 of the 69 positions where widening the gate found one — so without
+    this check the verifier spends almost all of its overrides re-ordering a turn that was already
+    won, which is pure deviation from a strong prior and shows up as an agreement regression. With
+    it, the verifier only speaks in the 6 positions where the scorer would actually throw the win
+    away. Prior protection, but decided by a proof instead of a score margin."""
     if not _HAVE_SEARCH:
         return None
     try:
@@ -293,9 +329,13 @@ def lethal_move(obs_dict, decklist, prized_counter=None) -> list[int] | None:
                     # `idx` indexes root_select.option, which mirrors the live obs.select.option.
                     # Guard the assumption: only return it if it's a legal index for the LIVE select
                     # (else fall through to None so the caller's normal policy stays legal).
-                    if 0 <= idx < len(select.option):
-                        return _selection_for(select, idx)
-                    return None
+                    if not (0 <= idx < len(select.option)):
+                        return None
+                    # A win exists. Does the scorer's own move keep it? If so, say nothing — the
+                    # prior is strong and deviating from it on an already-won turn is pure churn.
+                    if _keeps_the_win(root.searchId, root_select, defer_selection, me_i):
+                        return None
+                    return _selection_for(select, idx)
             finally:
                 try:
                     search_release(child.searchId)

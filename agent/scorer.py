@@ -524,6 +524,10 @@ def best_options(obs_dict) -> list[int]:
 
         # Specialist guard FIRST so it short-circuits before touching SelectContext.MAIN (which the
         # mock test engine does not define): when no specialist is active this whole gate is skipped.
+        # We only *prepare* the verifier's arguments here. The call itself now happens after the
+        # scorer has produced its own answer, so the verifier can be handed that answer and stay
+        # quiet whenever it already keeps the win (see lethal._keeps_the_win).
+        lethal_args = None
         if (grimmsnarl or tusk or crustle or lucario or cinderace or starmie or dunsparce or iono or fezandipiti or hops_snorlax) and _lethal_move is not None and ctx == SelectContext.MAIN:
             try:
                 if grimmsnarl:
@@ -559,11 +563,9 @@ def best_options(obs_dict) -> list[int]:
                         prized_counter = _grimmsnarl._prized(me_i)
                     except Exception:
                         prized_counter = None
-                lm = _lethal_move(obs_dict, deck, prized_counter)
-                if isinstance(lm, list) and lm:
-                    return lm
+                lethal_args = (deck, prized_counter)
             except Exception:
-                pass
+                lethal_args = None
 
         scores = []
         for o in select.option:
@@ -643,6 +645,17 @@ def best_options(obs_dict) -> list[int]:
                 out.append(i)
         if not out:
             return _fallback(select)
-        return out[:maxc]
+        out = out[:maxc]
+
+        # Verified in-turn win search, LAST: it sees the scorer's own answer and overrides it only
+        # when it can prove that answer throws a game-winning line away.
+        if lethal_args is not None:
+            try:
+                lm = _lethal_move(obs_dict, lethal_args[0], lethal_args[1], out)
+                if isinstance(lm, list) and lm:
+                    return lm
+            except Exception:
+                pass
+        return out
     except Exception:
         return _fallback_from_dict(obs_dict)
