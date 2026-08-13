@@ -1442,3 +1442,82 @@ strong fork beats a gambled one.
 ### If anyone ever picks this up again
 Start from a public fork and measure with `tools/fork_gauntlet.sh`. Do not start from
 `agent/scorer.py` — the 34.52% row above is what nine months of that produced against the field.
+
+---
+
+## 2026-08-13 22:56 UTC — best-of-N run, six parallel agents, two ships
+
+Six agents ran in isolated copies of this workspace (`/home/nixos/tempo-bon/{A..F}`), each with a
+different angle, none allowed to submit. A judge read all six and shipped two. Standing at the
+start: **692.1, rank 2280 of 6796**; frontier LiamK 1234.7. Deadline 2026-08-16.
+
+### Three of six independently converged on the same artifact
+
+A (notebook sweep, deduped by payload hash), B (episode mining) and C (top-20 reverse engineering)
+all landed on `tetsutani/grimmsnarl-ex-damage-transfer-control`, published 2026-08-11 — one day
+after this journal's last entry, so it had never been examined here. Asset sha256
+`40dce050fc411a2845b3dcd364fdd932ae3a856720a9f5f022278c59dd6e3a72`, which is the value the notebook
+asserts about itself; all three extractions reproduced it byte for byte. `main.py` `c61e540b`,
+`deck.csv` `92b92bac` (60 cards). Author `tetsu2131` is live at **859.3**.
+
+Measured against our best-ever payload (Alakazam v22, 716.1 live as ref 55288207):
+
+| measurement | result |
+| --- | --- |
+| head-to-head, 599 games (A) | **455–144 = 75.96% [72.38, 79.21]** |
+| head-to-head, 400 games (C) | 304–96 = 76.00% |
+| v22 vs Grimmsnarl pilots, 400 games | v22 wins **14.25%** |
+| this vs Grimmsnarl pilots, 800 games | **54.75%** |
+| field-share weighted, ~72% of real seats | **65.00% vs 42.41%** |
+
+Grimmsnarl holds **30.4% of all ladder seats**. Our active Alakazam collapses against the single
+largest archetype on the board, which is the most likely explanation for the gap between our 692.1
+and the 850-plus band.
+
+### A packaging bug that would have scored zero, found by two agents independently
+
+`tools/pack_fork.sh` does `cp -r "$ROOT/cg" "$TMP/cg"`. In a best-of-N workspace `cg` is a symlink
+to the shared repo, and `cp -r` copies a symlink as a symlink, so the archive carried one entry
+`./cg -> /home/nixos/tempo/cg` and **zero engine files**. On Kaggle that path does not exist,
+`from cg.api import ...` raises at import, and the submission scores zero.
+
+**The packed smoke test passes on a broken artifact.** It extracts to `/kaggle_simulations/agent`
+on this box, where the symlink still resolves. F caught it first and E caught it independently;
+E's fix is `cp -r` → `cp -rL` plus two hard asserts. This never affected submissions built inside
+`/home/nixos/tempo`, where `cg` is a real directory.
+
+Verification that now gates every ship:
+
+```bash
+tar -tvzf <artifact> | grep '^l'            # must print nothing
+tar -tzf  <artifact> | grep -c '^./cg/'     # must be >= 8, and libcg.so must be non-empty
+```
+
+### Submitted
+
+| ref | artifact | what |
+| --- | --- | --- |
+| **55492478** | bon-C `ARTIFACT.tar.gz` | tetsutani Adaptive Grimmsnarl ex Control v15, unmodified |
+| **55492479** | bon-F `ARTIFACT.tar.gz` | Alakazam v22 insurance, byte-identical to the 716.1 payload |
+
+Deliberately two different archetypes, so the two active slots cover two hypotheses rather than two
+rating draws of one policy. Both verified: 0 symlinks, real `libcg.so`, 60-card decks. Grimmsnarl
+packed smoke `steps=192 statuses=[DONE,DONE]`.
+
+### Negative results worth not repeating
+
+- **E, deck construction:** the near-frontier consensus list, a field-derived counter-position
+  build, and the single strictly-dominant card swap are all neutral-or-worse against v22 across
+  ~1,000 head-to-head games. v22's decklist is a local optimum under its own pilot. The remaining
+  gap is archetype-level, not list-level.
+- **D, pilot policy:** edited v22's first-turn decision, never finished gating it, and its own
+  EVIDENCE.md still carried a placeholder hash. Discarded unmeasured, per its own brief.
+- **B:** same payload as C but its tarball still carried the dangling symlink. Not shipped.
+
+### Next run should look at first
+
+1. Read the live scores on `55492478` and `55492479` before anything else. If Grimmsnarl settles
+   near its author's 859, the archetype call is confirmed and the Alakazam lineage is finished.
+2. Do not re-fork Alakazam. Three agents measured it losing to 30.4% of the board.
+3. `tools/pack_fork.sh` in this repo still has the `cp -r` bug. Port E's `cp -rL` fix in.
+4. Sim submissions close 2026-08-16. The Strategy writeup is worth $30,000 and is due 2026-09-13.
