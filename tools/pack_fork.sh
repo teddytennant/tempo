@@ -14,7 +14,11 @@ TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
 cp "$SRC/main.py" "$TMP/main.py"
 cp "$SRC/deck.csv" "$TMP/deck.csv"
 [ -f "$SRC/group.txt" ] && cp "$SRC/group.txt" "$TMP/group.txt"
-cp -r "$ROOT/cg" "$TMP/cg"
+# -L dereferences: in the best-of-N workspaces `cg` is a SYMLINK back to the shared tempo repo, and
+# a plain `cp -r` copies it AS a symlink. The tarball then carries `./cg -> /home/nixos/tempo/cg`,
+# which does not exist on Kaggle, so `import cg` raises at load and the submission scores zero —
+# while the packed smoke below still PASSES, because the symlink target does resolve on this box.
+cp -rL "$ROOT/cg" "$TMP/cg"
 rm -rf "$TMP/cg/__pycache__"
 python3 -c "
 import sys
@@ -26,6 +30,15 @@ print(f'  deck 60 cards ({len(set(deck))} unique); main.py compiles')
 ( cd "$TMP" && tar -czf "$OUT" . )
 echo "built $OUT"
 tar -tzf "$OUT" | head -20
+
+# The smoke below cannot catch a dangling symlink, because its target resolves locally. Assert here.
+if tar -tvzf "$OUT" | grep -q '^l'; then
+  echo "FATAL: tarball contains a symlink — it will dangle on Kaggle:" >&2
+  tar -tvzf "$OUT" | grep '^l' >&2; exit 1
+fi
+CG_N=$(tar -tzf "$OUT" | grep -c '^\./cg/.*\.py$' || true)
+[ "$CG_N" -ge 4 ] || { echo "FATAL: only $CG_N cg/*.py in tarball; engine not packed" >&2; exit 1; }
+echo "  cg/ packed as real files ($CG_N .py modules); no symlinks"
 
 # The packed smoke: a real cabt episode on the EXTRACTED tarball, both seats. This is the harness
 # Kaggle validation uses, and it loads main.py via exec — it catches loader-context bugs
